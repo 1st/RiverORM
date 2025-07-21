@@ -2,24 +2,38 @@
 
 RiverORM - minimalistic ORM for Python with async support
 
-## Principles
+## Our advantages
 
-RiverORM is a modern, async-enabled Python ORM that uses [Pydantic](https://github.com/pydantic/pydantic) models for schema and data. Its key features and benefits include:
+When compared to existing solutions, RiverORM offers several key advantages:
 
-1. **Async/await support out-of-the-box**. Like Tortoise ORM, all database operations return awaitables. You can write, for example, `users = await User.objects.filter(active=True).all()`. This makes it plug-and-play with [FastAPI](https://github.com/fastapi/fastapi), Starlette, Sanic, etc. Our ORM follow async-first approach by default.
 
-2. **Single Pydantic-based model**. Each ORM model class inherits from a base that includes Pydantic validation. This means you define one class and get both the database schema and the JSON-schema/validation. Like Ormar, “you don’t have to maintain Pydantic and other ORM models” separately. This greatly reduces code duplication and errors. Returned rows can be directly output as Pydantic objects, or used as FastAPI response models.
+1. **True async support by default:** Every query is await-able without extra setup, matching the needs of modern web frameworks. Developers can immediately use it in FastAPI or async scripts. This avoids the complexity of mixing sync and async (for example, unlike SQLAlchemy’s traditional sync usage or SQLModel’s sync mode).
 
-3. **Compact, Pythonic syntax**. We design the API to be concise (inspired by Peewee and Ormar). For example, you might write filters using Python operators (`User.age > 30`) or keyword lookups (`User.get(name="Alice")`). Defaults and introspection will minimize boilerplate (e.g. auto-generated id fields). The ORM is fully type-annotated and use Python 3.13+ features, giving good IDE/editor support and static checks (as SQLAlchemy 2.0 and SQLModel do).
+2. **Unified model and schema (Pydantic):** Models inherit Pydantic validation, so there is one source of truth for field definitions. This eliminates duplication and leverages Pydantic’s power (nested validation, JSON schemas, etc). It’s like having Django’s migrations with SQLAlchemy’s flexibility; in fact, Piccolo similarly “uses Pydantic internally to serialize data”.
 
-4. **Explicit query control**. Developers will choose when to load related data. The ORM supports both lazy and eager loading of relations, similar to Django’s _select_related/prefetch_related_ or Ormar’s techniques. Importantly, it is possible to inspect or log the raw SQL (as SQLAlchemy encourages), so there are no “hidden” or mysterious queries. This transparency addresses a common complaint about ORMs generating extra queries.
+3. **Lightweight and modern:** Unlike heavyweight ORMs _(SQLAlchemy)_ or fragmented stacks, our core is minimal and written in idiomatic Python. We will use modern syntax (e.g. int|None for optionals, pattern matching) and type hints aggressively, resulting in cleaner code and better auto-completion. For example, creating a model in our ORM will be as simple as:
 
-5. **Lightweight and modular**. Unlike monolithic ORMs, RiverORM has minimal core dependencies. We may leverage lightweight components (e.g. databases for async DB drivers) but keep our own query-builder layer. This aims to give the power of SQLAlchemy-style expressions without forcing the user to learn or install SQLAlchemy itself.
+```python
+from pydantic import Field
+from riverorm import Table
 
-6. **Pluggable and framework-agnostic**. The ORM doesn't assume any specific web framework. It can be used in FastAPI, Django, Flask, CLI tools, scripts, etc. It includes optional integration examples (e.g. how to plug into FastAPI dependency injection). Because we use Pydantic, it will fit naturally into FastAPI/Starlette workflows, but it will not depend on them.
+class Product(Table):
+    id: int = Field(pk=True)
+    name: str
+```
+_(This minimal style draws inspiration from Peewee’s compact definitions and SQLModel’s type-annotated models)._
 
-7. **Multi-DB support**. We start with PostgreSQL (asyncpg driver) to get advanced features (JSONB, array, etc.), but design the core so that other backends can be added. Later we can add MySQL, SQLite, etc., similar to Ormar’s support for multiple backends. Also our plans include to add NoSQL backends, like MongoDB.
+4. **Fine-grained query control:** Users can explicitly specify when to join or prefetch related tables. By default, related fields load lazily; but the API will offer methods to eagerly fetch joins when needed. At all times, developers can log or inspect the SQL (a feature SQLAlchemy provides) to avoid surprises. In other words, “everything [the ORM does] is ultimately the result of a developer-initiated decision,” just as SQLAlchemy’s philosophy states.
 
-8. **Future migrations and admin**. Initially, schema migrations may be manual or via an external tool (like Alembic). In the future, we could develop a simple migration system or integrate with existing ones. We may also consider providing a built-in admin interface or integration (as Django/Piccolo do) for developers who want it.
+5. **No hidden costs or extra queries:** Because the ORM requires you to be explicit (no magic N+1 by default), it will behave predictably. Like Peewee’s approach, results can be fetched in bulk or streamed, and low-level operations remain possible (returning raw tuples for performance if desired).
 
-By combining these elements, RiverORM aims to deliver the lightweight ease-of-use of Peewee, the async-first nature of Tortoise, and the Pydantic integration of Ormar, while giving developers full insight and control over the generated SQL.
+6. **Multi-backend and extensible:** Built atop an abstracted DB layer (like databases), adding support for other SQL engines is straightforward. Our initial focus on PostgreSQL allows us to use advanced types (JSONB, UUID, arrays) and later adapt the same model definitions to SQLite or MySQL with minimal changes, similar to how Ormar and Piccolo abstract their backends.
+
+7. **Developer ergonomics:** Extensive use of Python features means good editor support and faster development. For example, declaring relationships will use type hints and dataclass-like syntax, providing clear IDE hints. Async operations integrate with Python’s async ecosystem. We may even offer autocomplete for queries (like Piccolo’s tab-completion support).
+
+8. **Future-proof design:** By embracing Pydantic v2/3 and Python 3.13 features, the ORM will stay relevant for years. We’ve seen ORMs like Piccolo quickly adopt 3.13 support. We likewise aim to stay on the cutting edge, so users can leverage new Python capabilities without waiting for the ORM to catch up.
+
+In summary, our ORM will fill the gap for a compact, async-first, Pydantic-powered data layer. It will be as easy to use as Peewee or Ormar, but give the control and transparency that serious applications demand. By combining the best practices of existing libraries and learning from their limitations (for example, avoiding Peewee’s lack of migrations or Pony’s missing async), we can offer a superior, modern data mapper tailored for Python 3.13+ development.
+
+
+Read more details about our [mission](docs/MISSION.md).
