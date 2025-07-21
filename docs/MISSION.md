@@ -19,3 +19,5 @@ RiverORM is a modern, async-enabled Python ORM that uses [Pydantic](https://gith
 8. **Future migrations and admin**. Initially, schema migrations may be manual or via an external tool (like Alembic). In the future, we could develop a simple migration system or integrate with existing ones. We may also consider providing a built-in admin interface or integration (as Django/Piccolo do) for developers who want it.
 
 By combining these elements, RiverORM aims to deliver the lightweight ease-of-use of Peewee, the async-first nature of Tortoise, and the Pydantic integration of Ormar, while giving developers full insight and control over the generated SQL.
+
+We analyzed our competitors and described our discoveries [here](./COMPETITORS.md).
