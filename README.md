@@ -2,7 +2,7 @@
 
 RiverORM - minimalistic ORM for Python with async support
 
-## Our advantages
+## Project overview
 
 When compared to existing solutions, RiverORM offers several key advantages:
 
@@ -37,28 +37,46 @@ In summary, our ORM will fill the gap for a compact, async-first, Pydantic-power
 
 Read more details about our [mission](docs/MISSION.md).
 
-## Development
 
-## Setup project
+## Project Setup and Development
 
-To set up the project, run:
+### Initial Setup
 
-```bash
-# Create vistual environment
-uv env .venv
-source .venv/bin/activate
+To set up the project and install all dependencies, run:
 
-# Install dependencies
-uv sync
-
-# Install pre-commit hooks
-pre-commit install
+```sh
+make setup
 ```
 
-## Run tests
+This will:
+- Install system dependencies (e.g., uv)
+- Create a Python virtual environment using `uv`
+- Install all Python dependencies
 
-To run tests, use:
+### Running Tests
+
+To run the test suite:
+
+```sh
+make test
+```
+
+Find all tests in the `tests` directory. The tests are run using `pytest`, which provides a detailed output of the test results.
+
+### Code Checks (Linting & Formatting)
+
+To check code style and formatting:
+
+```sh
+make lint
+```
+
+This will run `ruff` for linting and formatting checks on the codebase.
+
+### Install pre-commit hooks
+
+Pre-commit hooks help maintain code quality by running checks before commits. To install them, run:
 
 ```bash
-pytest -v --tb=short
+pre-commit install
 ```
