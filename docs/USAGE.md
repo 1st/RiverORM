@@ -2,6 +2,8 @@
 
 RiverORM is a minimalistic, async-first ORM for Python, designed for simplicity and modern development. This guide covers the basics of defining models and using RiverORM in your project.
 
+First, ensure you have RiverORM installed. See the [Installation Guide](./INSTALL.md) for details.
+
 ## Defining Models
 
 Models in RiverORM inherit from `Model` and use type annotations with `Field` for schema definition. Fields support Pydantic validation and metadata.
