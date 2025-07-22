@@ -2,7 +2,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from riverorm import db
+from riverorm.db import db
 
 
 class Model(BaseModel):
@@ -106,7 +106,7 @@ class Model(BaseModel):
     async def create_table(cls):
         parts = []
         for name, field in cls.model_fields.items():
-            pg_type = db.python_type_to_pg(field.annotation)
-            parts.append(f"{name} {pg_type}")
+            db_field_type = db.python_to_sql_type(field.annotation)
+            parts.append(f"{name} {db_field_type}")
         sql = f"CREATE TABLE IF NOT EXISTS {cls.table_name()} ({', '.join(parts)});"
         return await db.execute(sql)
