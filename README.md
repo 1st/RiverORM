@@ -1,11 +1,19 @@
 # RiverORM
 
-RiverORM - minimalistic ORM for Python with async support
+RiverORM - minimalistic ORM for Python with async support.
+
+
+## Table of Contents
+
+- [Features](#riverorm-features)
+- [Usage](docs/USAGE.md) - a quickstart and usage guide.
+- [Installation](docs/INSTALL.md) - a guide to install RiverORM with optional database backends.
+- [Project Setup and Development](#project-setup-and-development)
+
 
 ## RiverORM features
 
 When compared to existing solutions, RiverORM offers several key advantages:
-
 
 1. **True async support by default:** Every query is await-able without extra setup, matching the needs of modern web frameworks. Developers can immediately use it in FastAPI or async scripts. This avoids the complexity of mixing sync and async (for example, unlike SQLAlchemy’s traditional sync usage or SQLModel’s sync mode).
 
@@ -35,11 +43,6 @@ _(This minimal style draws inspiration from Peewee’s compact definitions and S
 In summary, our ORM will fill the gap for a compact, async-first, Pydantic-powered data layer. It will be as easy to use as Peewee or Ormar, but give the control and transparency that serious applications demand. By combining the best practices of existing libraries and learning from their limitations (for example, avoiding Peewee’s lack of migrations or Pony’s missing async), we can offer a superior, modern data mapper tailored for Python 3.13+ development.
 
 Read more details about our [mission](docs/MISSION.md).
-
-
-## Usage
-
-See [usage examples](docs/USAGE.md) for a quickstart and usage guide.
 
 
 ## Project Setup and Development
