@@ -16,25 +16,25 @@ You can install RiverORM with support for specific databases using extras:
 
 - **PostgreSQL**:
   ```sh
-  pip install riverorm[postgres]
+  pip install 'riverorm[postgres]'
   # or using uv
-  uv add riverorm[postgres]
+  uv add 'riverorm[postgres]'
   ```
   This will install the `asyncpg` driver.
 
 - **MySQL**:
   ```sh
-  pip install riverorm[mysql]
+  pip install 'riverorm[mysql]'
   # or using uv
-  uv add riverorm[mysql]
+  uv add 'riverorm[mysql]'
   ```
   This will install the `aiomysql` driver.
 
 - **Multiple Backends**:
   ```sh
-  pip install riverorm[postgres,mysql]
+  pip install 'riverorm[postgres,mysql]'
   # or using uv
-  uv add riverorm[postgres,mysql]
+  uv add 'riverorm[postgres,mysql]'
   ```
 
 ## Development Installation
@@ -42,7 +42,12 @@ You can install RiverORM with support for specific databases using extras:
 For development, install with dev dependencies:
 
 ```sh
-pip install -e .[dev]
+# Install main dependencies
+uv sync
+# Install with PostgreSQL support
+uv pip install '.[postgres]'
+# Install with MySQL support
+uv pip install '.[mysql]'
 ```
 
 ---
