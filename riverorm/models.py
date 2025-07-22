@@ -2,12 +2,35 @@ import re
 
 from pydantic import BaseModel, Field
 
+from riverorm import database
+
 
 class Model(BaseModel):
     """
     Base model class for River ORM.
 
     This class can be extended to create specific models.
+
+    TODO: Add more features:
+    - Relationship fields (ForeignKey)
+    - add support for transactions
+    - select_related()
+    - prefetch_related()
+    - bulk_create()
+    - bulk_update()
+    - bulk_delete()
+    - add methods for creating, updating, and deleting related models
+    - add support for custom SQL queries
+    - add support for migrations
+    - add support for custom field types
+    - add support for custom validation
+    - add support for custom serialization and deserialization
+    - add support for custom indexing
+    - add support for custom constraints
+    - add support for custom triggers
+    - add support for custom views
+    - add support for custom stored procedures
+    - add support for custom functions
     """
 
     id: int = Field(..., description="Unique identifier for the model instance")
@@ -31,3 +54,59 @@ class Model(BaseModel):
             return name.lower()
 
         return getattr(cls.Meta, "table_name", None) or camel_to_snake(cls.__name__)
+
+    async def save(self):
+        """Save the model instance to the database."""
+        fields = self.model_fields.keys()
+        values = [getattr(self, f) for f in fields]
+        pk = getattr(self, self.Meta.primary_key, None)
+
+        if pk is None:
+            # INSERT
+            cols = ", ".join(fields)
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(fields)))
+            query = f"INSERT INTO {self.table_name()} ({cols}) VALUES ({placeholders}) RETURNING *"
+        else:
+            # UPDATE
+            cols = ", ".join(f"{f} = ${i + 1}" for i, f in enumerate(fields))
+            query = (
+                f"UPDATE {self.table_name()} SET {cols} WHERE {self.Meta.primary_key} = "
+                "${len(fields) + 1} RETURNING *"
+            )
+            values.append(pk)
+
+        row = await database.fetchrow(query, *values)
+        self.__dict__.update(**row)
+        return self
+
+    async def delete(self):
+        pk_value = getattr(self, self.Meta.primary_key)
+        query = f"DELETE FROM {self.table_name()} WHERE {self.Meta.primary_key} = $1"
+        await database.execute(query, pk_value)
+
+    @classmethod
+    async def get(cls, **kwargs) -> "Model | None":
+        keys = list(kwargs.keys())
+        values = list(kwargs.values())
+        conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
+        query = f"SELECT * FROM {cls.table_name()} WHERE {conditions} LIMIT 1"
+        row = await database.fetchrow(query, *values)
+        return cls(**row) if row else None
+
+    @classmethod
+    async def filter(cls, **kwargs) -> list["Model"]:
+        keys = list(kwargs.keys())
+        values = list(kwargs.values())
+        conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
+        query = f"SELECT * FROM {cls.table_name()} WHERE {conditions}"
+        rows = await database.fetch(query, *values)
+        return [cls(**dict(r)) for r in rows]
+
+    @classmethod
+    async def create_table(cls):
+        parts = []
+        for name, field in cls.model_fields.items():
+            pg_type = database.python_type_to_pg(field.annotation)
+            parts.append(f"{name} {pg_type}")
+        sql = f"CREATE TABLE IF NOT EXISTS {cls.table_name()} ({', '.join(parts)});"
+        return await database.execute(sql)

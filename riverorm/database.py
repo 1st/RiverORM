@@ -43,3 +43,22 @@ async def fetchrow(query: str, *args):
     if not query.strip().endswith(";"):
         query += ";"
     return await _connection.fetchrow(query, *args)
+
+
+def python_type_to_pg(py_type: type) -> str:
+    if py_type is int:
+        return "INTEGER"
+    elif py_type is float:
+        return "REAL"
+    elif py_type is bool:
+        return "BOOLEAN"
+    elif py_type is str:
+        return "TEXT"
+    elif py_type.__name__ == "datetime":
+        return "TIMESTAMP"
+    elif py_type.__name__ == "date":
+        return "DATE"
+    elif py_type.__name__ == "UUID":
+        return "UUID"
+    else:
+        raise TypeError(f"Unsupported Python type for SQL: {py_type}")
