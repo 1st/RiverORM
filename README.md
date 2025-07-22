@@ -14,10 +14,9 @@ When compared to existing solutions, RiverORM offers several key advantages:
 3. **Lightweight and modern:** Unlike heavyweight ORMs _(SQLAlchemy)_ or fragmented stacks, our core is minimal and written in idiomatic Python. We will use modern syntax (e.g. int|None for optionals, pattern matching) and type hints aggressively, resulting in cleaner code and better auto-completion. For example, creating a model in our ORM will be as simple as:
 
 ```python
-from pydantic import Field
-from riverorm import Table
+from riverorm import Field, Model
 
-class Product(Table):
+class Product(Model):
     id: int = Field(pk=True)
     name: str
 ```

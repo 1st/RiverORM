@@ -1,4 +1,4 @@
-from riverorm.models import Field, Model
+from riverorm import Field, Model
 
 
 class User(Model):
