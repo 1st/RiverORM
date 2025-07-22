@@ -1,0 +1,55 @@
+[project]
+name = "riverorm"
+version = "0.1.0"
+description = "RiverORM - minimalistic ORM for Python with async support"
+authors = [{name = "Anton Danylchenko", email = "anton.danilchenko@gmail.com"}]
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+dependencies = [
+    "pydantic>=2.11.7",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.17.0",
+    "pre-commit>=4.2.0",
+    "pytest>=8.4.1",
+    "ruff>=0.12.4",
+]
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "riverorm",
+    "pyproject.toml",
+]
+
+[tool.hatch.build.targets.wheel]
+include = [
+    "riverorm",
+    "pyproject.toml",
+]
+
+[tool.pytest.env]
+PYTHONPATH = "."
+
+[tool.ruff]
+line-length = 100
+# Enable the pycodestyle (`E`) and Pyflakes (`F`) rules by default.
+# Unlike Flake8, Ruff doesn't enable pycodestyle warnings (`W`) or
+# McCabe complexity (`C901`) by default
+lint.select = ["E", "F"]
+lint.ignore = []
+
+[tool.mypy]
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_configs = true
+warn_redundant_casts = true
+exclude = [
+    '^.venv/',
+    '^docs/',
+]

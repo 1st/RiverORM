@@ -1,0 +1,49 @@
+# Basic pre-commit configuration
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v5.0.0
+  hooks:
+  - id: check-yaml
+  - id: end-of-file-fixer
+  - id: trailing-whitespace
+  - id: check-merge-conflict
+  - id: debug-statements
+
+# Check for Python code style
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.12.3
+  hooks:
+  - id: ruff
+    args: [--line-length=100]
+
+# Check for Python code formatting
+- repo: https://github.com/pre-commit/mirrors-mypy
+  rev: v1.17.0
+  hooks:
+  - id: mypy
+    # Later we can add next flags: --strict / --strict-optional / --strict-equality / --strict-boolean
+    args: [--ignore-missing-imports, --warn-return-any, --warn-unused-configs, --warn-redundant-casts]
+
+# Check for UV files
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.7.21
+  hooks:
+  - id: uv-lock
+    name: Update the UV lock file
+
+# Check for syntax upgrade for newer Python versions
+- repo: https://github.com/asottile/pyupgrade
+  rev: v3.20.0
+  hooks:
+  - id: pyupgrade
+
+# Run tests with pytest
+- repo: local
+  hooks:
+  - id: pytest
+    name: pytest
+    entry: .venv/bin/pytest
+    language: python
+    types: [python]
+    pass_filenames: false
+    always_run: true

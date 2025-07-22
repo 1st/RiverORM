@@ -37,3 +37,29 @@ In summary, our ORM will fill the gap for a compact, async-first, Pydantic-power
 
 
 Read more details about our [mission](docs/MISSION.md).
+
+## Development
+
+## Setup project
+
+To set up the project, run:
+
+```bash
+# Create vistual environment
+uv env .venv
+source .venv/bin/activate
+
+# Install dependencies
+uv sync
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+## Run tests
+
+To run tests, use:
+
+```bash
+pytest -v --tb=short
+```
