@@ -2,7 +2,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from riverorm import database
+from riverorm import db
 
 
 class Model(BaseModel):
@@ -75,14 +75,14 @@ class Model(BaseModel):
             )
             values.append(pk)
 
-        row = await database.fetchrow(query, *values)
+        row = await db.fetchrow(query, *values)
         self.__dict__.update(**row)
         return self
 
     async def delete(self):
         pk_value = getattr(self, self.Meta.primary_key)
         query = f"DELETE FROM {self.table_name()} WHERE {self.Meta.primary_key} = $1"
-        await database.execute(query, pk_value)
+        await db.execute(query, pk_value)
 
     @classmethod
     async def get(cls, **kwargs) -> "Model | None":
@@ -90,7 +90,7 @@ class Model(BaseModel):
         values = list(kwargs.values())
         conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
         query = f"SELECT * FROM {cls.table_name()} WHERE {conditions} LIMIT 1"
-        row = await database.fetchrow(query, *values)
+        row = await db.fetchrow(query, *values)
         return cls(**row) if row else None
 
     @classmethod
@@ -99,14 +99,14 @@ class Model(BaseModel):
         values = list(kwargs.values())
         conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
         query = f"SELECT * FROM {cls.table_name()} WHERE {conditions}"
-        rows = await database.fetch(query, *values)
+        rows = await db.fetch(query, *values)
         return [cls(**dict(r)) for r in rows]
 
     @classmethod
     async def create_table(cls):
         parts = []
         for name, field in cls.model_fields.items():
-            pg_type = database.python_type_to_pg(field.annotation)
+            pg_type = db.python_type_to_pg(field.annotation)
             parts.append(f"{name} {pg_type}")
         sql = f"CREATE TABLE IF NOT EXISTS {cls.table_name()} ({', '.join(parts)});"
-        return await database.execute(sql)
+        return await db.execute(sql)
