@@ -25,8 +25,9 @@ class Model(BaseModel):
     @classmethod
     def table_name(cls):
         def camel_to_snake(name):
-            name = re.sub("(.)([A-Z][a-z]+)", r"\1_\2", name)
-            name = re.sub("([a-z])([A-Z0-9])", r"\1_\2", name)
+            name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+            name = re.sub(r"([a-z])([A-Z0-9])", r"\1_\2", name)
+            name = re.sub(r"(\d)([A-Z][a-z])", r"\1_\2", name)
             return name.lower()
 
         return getattr(cls.Meta, "table_name", None) or camel_to_snake(cls.__name__)
