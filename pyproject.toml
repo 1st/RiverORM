@@ -57,4 +57,5 @@ warn_redundant_casts = true
 exclude = [
     '^.venv/',
     '^docs/',
+    "^build/",
 ]
