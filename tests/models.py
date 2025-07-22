@@ -10,7 +10,7 @@ class User(Model):
     username: str = Field(..., description="Username of the user")
     email: str = Field(..., description="Email address of the user")
     is_active: bool = Field(True, description="Is the user active?")
-    orders: list = Field(default_factory=list, description="Orders placed by the user")
+    orders: list["Order"] = Field(default_factory=list, description="Orders placed by the user")
 
 
 class Product(Model):
@@ -23,7 +23,7 @@ class Product(Model):
     price: float = Field(..., description="Price of the product")
     description: str = Field(..., description="Description of the product")
     in_stock: bool = Field(True, description="Is the product in stock?")
-    orders: list = Field(default_factory=list, description="Orders for this product")
+    orders: list["Order"] = Field(default_factory=list, description="Orders for this product")
 
 
 class Order(Model):
