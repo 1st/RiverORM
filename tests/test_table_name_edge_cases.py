@@ -15,17 +15,18 @@ def make_model_class(name, table_name=None):
 
 def test_table_name_edge_cases():
     cases = [
-        ("NDAUser", "nda_user"),
-        ("UserNDAXMLContract", "user_ndaxml_contract"),
+        ("UserA", "user_a"),
         ("UserAContract", "user_a_contract"),
         ("userNDA", "user_nda"),
         ("UserNDAXML", "user_ndaxml"),
-        ("UserA", "user_a"),
+        ("UserNDAXMLContract", "user_ndaxml_contract"),
         ("User2FA", "user_2fa"),
+        ("NDAUser", "nda_user"),
         ("XMLUserNDA", "xml_user_nda"),
         ("user", "user"),
         ("User_NDA", "user_nda"),
         ("User__NDA", "user__nda"),  # double underscore preserved
+        ("User2Company", "user_2_company"),
     ]
     for class_name, expected in cases:
         cls = make_model_class(class_name)
