@@ -32,6 +32,10 @@ jobs:
     - name: Install dependencies
       run: uv sync
 
+    - name: Install extra dependencies
+      run: |
+        uv pip install '.[mysql,postgres]'
+
     - name: Run Ruff
       run: uv run ruff check
 
