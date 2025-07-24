@@ -34,6 +34,7 @@ jobs:
           MYSQL_DATABASE: river_test
           MYSQL_USER: river_user
           MYSQL_PASSWORD: river_pass
+          MYSQL_ROOT_PASSWORD: root_pass
         ports:
           - 3306:3306
         options: >-
