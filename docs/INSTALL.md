@@ -48,6 +48,8 @@ uv sync
 uv pip install '.[postgres]'
 # Install with MySQL support
 uv pip install '.[mysql]'
+# Alternatively, install with all extras
+uv sync --all-extras
 ```
 
 ---

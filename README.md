@@ -60,6 +60,18 @@ This will:
 - Create a Python virtual environment using `uv`
 - Install all Python dependencies
 
+### Starting Database Containers (Optional)
+
+If you do not already have a database running locally, you can start the required database services using Docker:
+
+```sh
+make docker-up
+```
+
+This will run `docker compose` to start the database containers defined in `docker-compose.yml`.
+
+If you prefer to use your own local database, you can skip this step.
+
 ### Running Tests
 
 To run the test suite:
@@ -67,6 +79,8 @@ To run the test suite:
 ```sh
 make test
 ```
+
+Some tests require a running database, so ensure you have one available (either via Docker or locally). The tests will automatically connect to the database specified in the `POSTGRES_DSN` environment variable.
 
 Find all tests in the `tests` directory. The tests are run using `pytest`, which provides a detailed output of the test results.
 
