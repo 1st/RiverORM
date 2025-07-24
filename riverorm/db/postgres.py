@@ -1,4 +1,5 @@
 import logging
+import types
 import typing
 
 import asyncpg
@@ -65,7 +66,6 @@ class PostgresDatabase(BaseDatabase):
     @staticmethod
     def python_to_sql_type(py_type: type) -> str:
         # Handle Union types (e.g., Optional[int], int | None)
-        import types
 
         # For PEP 604 (int | None), __origin__ is types.UnionType in Python 3.10+
         union_types = (
