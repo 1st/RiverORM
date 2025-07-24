@@ -7,9 +7,9 @@ from riverorm.db import db
 from tests.models import User
 
 POSTGRES_DSN = os.getenv(
-    "POSTGRES_DSN", "postgresql://river_user:river_pass@localhost:54321/river_test"
+    "POSTGRES_DSN", "postgresql://river_user:river_pass@localhost:5432/river_test"
 )
-MYSQL_DSN = os.getenv("MYSQL_DSN", "mysql://river_user:river_pass@localhost:33061/river_test")
+MYSQL_DSN = os.getenv("MYSQL_DSN", "mysql://river_user:river_pass@localhost:3306/river_test")
 
 
 @pytest_asyncio.fixture(scope="function")
