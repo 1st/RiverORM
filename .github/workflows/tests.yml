@@ -19,8 +19,8 @@ jobs:
         image: postgres:15
         env:
           POSTGRES_DB: river_test
-          POSTGRES_USER: river
-          POSTGRES_PASSWORD: riverpass
+          POSTGRES_USER: river_user
+          POSTGRES_PASSWORD: river_pass
         ports:
           - 5432:5432
         options: >-
@@ -32,19 +32,18 @@ jobs:
         image: mysql:8
         env:
           MYSQL_DATABASE: river_test
-          MYSQL_USER: river
-          MYSQL_PASSWORD: riverpass
-          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_USER: river_user
+          MYSQL_PASSWORD: river_pass
         ports:
           - 3306:3306
         options: >-
-          --health-cmd mysqladmin ping -u river --password=riverpass
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd="mysqladmin ping -u river_user --password=river_pass"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
 
     env:
-      DB_DSN: postgresql://river:riverpass@localhost:5432/river_test
+      DB_DSN: postgresql://river_user:river_pass@localhost:5432/river_test
 
     steps:
       - uses: actions/checkout@v4
