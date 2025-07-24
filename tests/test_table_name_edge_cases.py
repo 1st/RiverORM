@@ -4,7 +4,7 @@ from typing import ClassVar
 from riverorm.models import Model
 
 
-def make_model_class(name, table_name=None):
+def make_model_class(name, table_name=None) -> type[Model]:
     meta_attrs = {}
     if table_name is not None:
         meta_attrs["table_name"] = table_name

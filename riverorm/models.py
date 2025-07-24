@@ -1,8 +1,12 @@
 import re
+from typing import TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.fields import FieldInfo
 
 from riverorm.db import db
+
+T = TypeVar("T", bound="Model")
 
 
 class Model(BaseModel):
@@ -33,31 +37,59 @@ class Model(BaseModel):
     - add support for custom functions
     """
 
-    id: int = Field(..., description="Unique identifier for the model instance")
+    model_config = ConfigDict(
+        populate_by_name=True,
+        from_attributes=True,
+        validate_by_name=True,
+        use_enum_values=True,
+        arbitrary_types_allowed=True,
+    )
+
+    id: int | None = Field(default=None, description="Primary key ID")
 
     class Meta:
         table_name: str
         primary_key: str = "id"
 
-    class Config:
-        from_attributes = True
-        validate_by_name = True
-        use_enum_values = True
-        arbitrary_types_allowed = True
-
     @classmethod
-    def table_name(cls):
-        def camel_to_snake(name):
+    def table_name(cls) -> str:
+        def camel_to_snake(name: str) -> str:
             name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
             name = re.sub(r"([a-z])([A-Z0-9])", r"\1_\2", name)
             name = re.sub(r"(\d)([A-Z][a-z])", r"\1_\2", name)
             return name.lower()
 
-        return getattr(cls.Meta, "table_name", None) or camel_to_snake(cls.__name__)
+        name: str | None = getattr(cls.Meta, "table_name", None)
+        if not name:
+            return camel_to_snake(cls.__name__)
+        return name
+
+    @classmethod
+    def model_virtual_fields(cls) -> dict[str, FieldInfo]:
+        """
+        Returns a dictionary of model fields with their names as keys and Field objects as values.
+        """
+        return {
+            name: field
+            for name, field in cls.model_fields.items()
+            if getattr(field.annotation, "__origin__", None) in (list, tuple)
+            or (isinstance(field.annotation, type) and issubclass(field.annotation, Model))
+        }
+
+    @classmethod
+    def model_real_fields(cls) -> dict[str, FieldInfo]:
+        """
+        Returns a dictionary of model fields with their names as keys and Field objects as values,
+        excluding virtual fields.
+        """
+        virtual_fields = set(cls.model_virtual_fields().keys())
+        return {
+            name: field for name, field in cls.model_fields.items() if name not in virtual_fields
+        }
 
     async def save(self):
         """Save the model instance to the database."""
-        fields = self.model_fields.keys()
+        fields = self.__class__.model_real_fields().keys()
         values = [getattr(self, f) for f in fields]
         pk = getattr(self, self.Meta.primary_key, None)
 
@@ -65,48 +97,65 @@ class Model(BaseModel):
             # INSERT
             cols = ", ".join(fields)
             placeholders = ", ".join(f"${i + 1}" for i in range(len(fields)))
-            query = f"INSERT INTO {self.table_name()} ({cols}) VALUES ({placeholders}) RETURNING *"
+            query = f'INSERT INTO "{self.table_name()}" ({cols}) VALUES ({placeholders})'
+            await db.execute(query, *values)
         else:
             # UPDATE
             cols = ", ".join(f"{f} = ${i + 1}" for i, f in enumerate(fields))
             query = (
-                f"UPDATE {self.table_name()} SET {cols} WHERE {self.Meta.primary_key} = "
-                "${len(fields) + 1} RETURNING *"
+                f'UPDATE "{self.table_name()}" SET {cols} WHERE {self.Meta.primary_key} = '
+                f"${len(fields) + 1}"
             )
+            # Add the primary key value to the end of the values list, in the WHERE clause
             values.append(pk)
+            await db.update(query, *values)
 
-        row = await db.fetchrow(query, *values)
-        self.__dict__.update(**row)
+        # TODO: Update the instance with the new values from the database
+        # self.__dict__.update(**row)
         return self
 
     async def delete(self):
         pk_value = getattr(self, self.Meta.primary_key)
-        query = f"DELETE FROM {self.table_name()} WHERE {self.Meta.primary_key} = $1"
+        query = f'DELETE FROM "{self.table_name()}" WHERE {self.Meta.primary_key} = $1'
         await db.execute(query, pk_value)
 
     @classmethod
-    async def get(cls, **kwargs) -> "Model | None":
+    async def all(cls: type[T], limit: int = 1000) -> list[T]:
+        query = f'SELECT * FROM "{cls.table_name()}" LIMIT {limit};'
+        rows = await db.fetch(query)
+        return [cls(**dict(row)) for row in rows]
+
+    @classmethod
+    async def get(cls: type[T], **kwargs) -> T | None:
         keys = list(kwargs.keys())
         values = list(kwargs.values())
         conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
-        query = f"SELECT * FROM {cls.table_name()} WHERE {conditions} LIMIT 1"
+        query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions} LIMIT 1'
         row = await db.fetchrow(query, *values)
         return cls(**row) if row else None
 
     @classmethod
-    async def filter(cls, **kwargs) -> list["Model"]:
+    async def filter(cls: type[T], **kwargs) -> list[T]:
         keys = list(kwargs.keys())
         values = list(kwargs.values())
         conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
-        query = f"SELECT * FROM {cls.table_name()} WHERE {conditions}"
+        query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions}'
         rows = await db.fetch(query, *values)
         return [cls(**dict(r)) for r in rows]
 
     @classmethod
-    async def create_table(cls):
+    async def create_table(cls: type[T]):
         parts = []
-        for name, field in cls.model_fields.items():
-            db_field_type = db.python_to_sql_type(field.annotation)
+        for name, field in cls.model_real_fields().items():
+            field_type = field.annotation
+            if field_type is None:
+                raise ValueError(f"Field '{name}' has no type annotation")
+            db_field_type = db.python_to_sql_type(field_type)
             parts.append(f"{name} {db_field_type}")
-        sql = f"CREATE TABLE IF NOT EXISTS {cls.table_name()} ({', '.join(parts)});"
+        sql = f'CREATE TABLE IF NOT EXISTS "{cls.table_name()}" ({", ".join(parts)});'
+        return await db.execute(sql)
+
+    @classmethod
+    async def drop_table(cls: type[T]):
+        sql = f'DROP TABLE IF EXISTS "{cls.table_name()}";'
         return await db.execute(sql)

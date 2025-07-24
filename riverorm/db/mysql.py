@@ -60,6 +60,15 @@ class MySQLDatabase(BaseDatabase):
             query += ";"
         return await self._conn.fetchrow(query, *args)
 
+    async def update(self, query: str, *args):
+        if self._conn is None:
+            raise Exception("Connection is not established")
+        if not query.strip().lower().startswith("update"):
+            raise ValueError("Update can only be used with UPDATE queries")
+        if not query.strip().endswith(";"):
+            query += ";"
+        return await self._conn.execute(query, *args)
+
     @staticmethod
     def python_to_sql_type(py_type: type) -> str:
         if py_type is int:

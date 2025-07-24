@@ -18,6 +18,9 @@ class BaseDatabase(ABC):
     @abstractmethod
     async def fetchrow(self, query: str, *args: Any) -> Any: ...
 
+    @abstractmethod
+    async def update(self, query: str, *args: Any) -> Any: ...
+
     @staticmethod
     @abstractmethod
     def python_to_sql_type(py_type: type) -> str: ...
