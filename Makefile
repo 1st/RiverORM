@@ -1,3 +1,5 @@
+include .env
+
 # Initial full setup
 .PHONY: setup
 setup: install-sys-deps install-python install-python-deps
