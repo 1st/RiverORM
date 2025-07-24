@@ -1,6 +1,8 @@
 # Helper to create dummy classes with given name and optional Meta.table_name
 from typing import ClassVar
 
+import pytest
+
 from riverorm.models import Model
 
 
@@ -13,8 +15,9 @@ def make_model_class(name, table_name=None) -> type[Model]:
     return type(name, (Model,), attrs)
 
 
-def test_table_name_edge_cases():
-    cases = [
+@pytest.mark.parametrize(
+    "class_name, expected",
+    [
         ("UserA", "user_a"),
         ("UserAContract", "user_a_contract"),
         ("userNDA", "user_nda"),
@@ -31,10 +34,11 @@ def test_table_name_edge_cases():
         ("User_NDA", "user_nda"),
         ("User__NDA", "user__nda"),  # double underscore preserved
         ("User2Company", "user_2_company"),
-    ]
-    for class_name, expected in cases:
-        cls = make_model_class(class_name)
-        assert cls.table_name() == expected, f"{class_name} -> {cls.table_name()} != {expected}"
+    ],
+)
+def test_table_name_edge_cases(class_name, expected):
+    cls = make_model_class(class_name)
+    assert cls.table_name() == expected, f"{class_name} -> {cls.table_name()} != {expected}"
 
 
 def test_table_name_manual_override():
