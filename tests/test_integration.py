@@ -1,20 +1,14 @@
-import os
-
 import pytest
 import pytest_asyncio
 
+from riverorm.config import config
 from riverorm.db import db
 from tests.models import User
-
-POSTGRES_DSN = os.getenv(
-    "POSTGRES_DSN", "postgresql://river_user:river_pass@localhost:5432/river_test"
-)
-MYSQL_DSN = os.getenv("MYSQL_DSN", "mysql://river_user:river_pass@localhost:3306/river_test")
 
 
 @pytest_asyncio.fixture(scope="function")
 async def db_setup_and_teardown():
-    await db.connect(POSTGRES_DSN)
+    await db.connect(config.POSTGRES_DSN)
     await User.drop_table()
     await User.create_table()
     yield
