@@ -42,7 +42,7 @@ repos:
   hooks:
   - id: pytest
     name: pytest
-    entry: .venv/bin/pytest
+    entry: bash -c 'set -a; [ -f .env ] && source .env; set +a; exec .venv/bin/pytest'
     language: python
     types: [python]
     pass_filenames: false
