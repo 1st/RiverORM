@@ -47,6 +47,13 @@ Read more details about our [mission](docs/MISSION.md).
 
 ## Project Setup and Development
 
+### Prerequisites
+
+Before you start, ensure you copy the example environment file and edit it to include your database connection strings:
+```sh
+cp .env.example .env
+```
+
 ### Initial Setup
 
 To set up the project and install all dependencies, run:
