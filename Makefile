@@ -1,5 +1,3 @@
-include .env
-
 # Initial full setup
 .PHONY: setup
 setup: install-sys-deps install-python install-python-deps
@@ -49,3 +47,4 @@ test:
 lint:
 	.venv/bin/ruff check
 	.venv/bin/ruff format --check
+	.venv/bin/mypy --strict --show-error-codes
