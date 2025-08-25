@@ -159,7 +159,8 @@ class Model(BaseModel):
                 raise ValueError(f"Field '{name}' has no type annotation")
 
             if name == pk_name and is_int_type(field_type):
-                parts.append(f"{name} SERIAL PRIMARY KEY")
+                # Delegate to db backend for auto-increment PK SQL
+                parts.append(db.auto_increment_primary_key_sql(name))
             else:
                 db_field_type = db.python_to_sql_type(field_type)
                 parts.append(f"{name} {db_field_type}")

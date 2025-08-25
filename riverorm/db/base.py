@@ -24,3 +24,11 @@ class BaseDatabase(ABC):
     @staticmethod
     @abstractmethod
     def python_to_sql_type(py_type: type) -> str: ...
+
+    # Helper methods for SQL generation
+
+    @staticmethod
+    @abstractmethod
+    def auto_increment_primary_key_sql(name: str) -> str:
+        """Return the SQL snippet for an auto-increment primary key field."""
+        ...

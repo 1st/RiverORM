@@ -119,3 +119,7 @@ class PostgresDatabase(BaseDatabase):
             return "JSONB"
         else:
             raise TypeError(f"Unsupported Python type for SQL: {py_type}")
+
+    @staticmethod
+    def auto_increment_primary_key_sql(name: str) -> str:
+        return f"{name} SERIAL PRIMARY KEY"

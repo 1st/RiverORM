@@ -83,3 +83,7 @@ class MySQLDatabase(BaseDatabase):
             return "BLOB"
         else:
             raise ValueError(f"Unsupported type: {py_type}")
+
+    @staticmethod
+    def auto_increment_primary_key_sql(name: str) -> str:
+        return f"{name} INTEGER PRIMARY KEY AUTO_INCREMENT"
