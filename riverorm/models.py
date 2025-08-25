@@ -154,7 +154,7 @@ class Model(BaseModel):
             "in": "IN",
         }
         conditions = []
-        values = []
+        values: list = []
         param_idx = 1
         for key, value in kwargs.items():
             if "__" in key:
@@ -163,6 +163,9 @@ class Model(BaseModel):
                 if not sql_op:
                     raise ValueError(f"Unsupported filter operator: {op}")
                 if op == "in":
+                    assert isinstance(value, (list, tuple)), (
+                        "__in operator requires a list or tuple"
+                    )
                     placeholders = ", ".join(f"${param_idx + i}" for i in range(len(value)))
                     conditions.append(f"{field} IN ({placeholders})")
                     values.extend(value)
