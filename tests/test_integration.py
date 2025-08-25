@@ -25,7 +25,7 @@ async def test_create_and_fetch_user(db_setup_and_teardown):
 
     fetched = await User.get(username="Alice")
     assert fetched is not None
-    assert fetched.id is None  # TODO: Add auto-increment support
+    assert fetched.id is not None  # Auto-increment PK should be set
     assert fetched.username == "Alice"
     assert fetched.email == "alice@example.com"
     assert fetched.is_active is True
