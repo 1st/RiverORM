@@ -115,9 +115,6 @@ class Model(BaseModel):
             query = f'UPDATE "{self.table_name()}" SET {cols} WHERE {pk_name} = ${len(fields) + 1}'
             values.append(pk)
             await db.update(query, *values)
-
-        # TODO: Update the instance with the new values from the database
-        # self.__dict__.update(**row)
         return self
 
     async def delete(self):
@@ -127,6 +124,7 @@ class Model(BaseModel):
 
     @classmethod
     async def all(cls: type[T], limit: int = 1000) -> list[T]:
+        """Fetch all rows for this model (up to the given limit)."""
         query = f'SELECT * FROM "{cls.table_name()}" LIMIT {limit};'
         rows = await db.fetch(query)
         return [cls(**dict(row)) for row in rows]
@@ -142,12 +140,53 @@ class Model(BaseModel):
 
     @classmethod
     async def filter(cls: type[T], **kwargs) -> list[T]:
-        keys = list(kwargs.keys())
-        values = list(kwargs.values())
-        conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
-        query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions}'
+        """
+        Filter rows using field lookups, e.g. age__gt=18, name="foo".
+        Supported operators: __gt, __lt, __gte, __lte, __ne, __eq (default), __in
+        """
+        ops = {
+            "gt": ">",
+            "lt": "<",
+            "gte": ">=",
+            "lte": "<=",
+            "ne": "!=",
+            "eq": "=",
+            "in": "IN",
+        }
+        conditions = []
+        values = []
+        param_idx = 1
+        for key, value in kwargs.items():
+            if "__" in key:
+                field, op = key.rsplit("__", 1)
+                sql_op = ops.get(op)
+                if not sql_op:
+                    raise ValueError(f"Unsupported filter operator: {op}")
+                if op == "in":
+                    placeholders = ", ".join(f"${param_idx + i}" for i in range(len(value)))
+                    conditions.append(f"{field} IN ({placeholders})")
+                    values.extend(value)
+                    param_idx += len(value)
+                else:
+                    conditions.append(f"{field} {sql_op} ${param_idx}")
+                    values.append(value)
+                    param_idx += 1
+            else:
+                conditions.append(f"{key} = ${param_idx}")
+                values.append(value)
+                param_idx += 1
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f'SELECT * FROM "{cls.table_name()}"{where}'
         rows = await db.fetch(query, *values)
         return [cls(**dict(r)) for r in rows]
+
+    @classmethod
+    def select_related(cls: type[T], *related_fields) -> type[T]:
+        """
+        Stub for select_related. Should be used to prefetch related objects (not implemented).
+        """
+        # This is a stub for future relationship support
+        return cls
 
     @classmethod
     async def create_table(cls: type[T]):
