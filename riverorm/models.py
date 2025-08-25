@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
 from riverorm.db import db
+from riverorm.utils import is_int_type
 
 T = TypeVar("T", bound="Model")
 
@@ -88,25 +89,30 @@ class Model(BaseModel):
         }
 
     async def save(self):
-        """Save the model instance to the database."""
-        fields = self.__class__.model_real_fields().keys()
-        values = [getattr(self, f) for f in fields]
-        pk = getattr(self, self.Meta.primary_key, None)
+        """Save the model instance to the database, with auto-increment PK support."""
+        fields = list(self.__class__.model_real_fields().keys())
+        pk_name = self.Meta.primary_key
+        pk = getattr(self, pk_name, None)
 
         if pk is None:
-            # INSERT
-            cols = ", ".join(fields)
-            placeholders = ", ".join(f"${i + 1}" for i in range(len(fields)))
-            query = f'INSERT INTO "{self.table_name()}" ({cols}) VALUES ({placeholders})'
-            await db.execute(query, *values)
+            # INSERT: omit PK if None, let DB auto-generate
+            insert_fields = [f for f in fields if not (f == pk_name and getattr(self, f) is None)]
+            values = [getattr(self, f) for f in insert_fields]
+            cols = ", ".join(insert_fields)
+            placeholders = ", ".join(f"${i + 1}" for i in range(len(insert_fields)))
+            # Use RETURNING to fetch the generated PK
+            query = (
+                f'INSERT INTO "{self.table_name()}" ({cols}) VALUES ({placeholders}) '
+                f"RETURNING {pk_name}"
+            )
+            row = await db.fetchrow(query, *values)
+            if row and pk_name in row:
+                setattr(self, pk_name, row[pk_name])
         else:
             # UPDATE
+            values = [getattr(self, f) for f in fields]
             cols = ", ".join(f"{f} = ${i + 1}" for i, f in enumerate(fields))
-            query = (
-                f'UPDATE "{self.table_name()}" SET {cols} WHERE {self.Meta.primary_key} = '
-                f"${len(fields) + 1}"
-            )
-            # Add the primary key value to the end of the values list, in the WHERE clause
+            query = f'UPDATE "{self.table_name()}" SET {cols} WHERE {pk_name} = ${len(fields) + 1}'
             values.append(pk)
             await db.update(query, *values)
 
@@ -146,12 +152,18 @@ class Model(BaseModel):
     @classmethod
     async def create_table(cls: type[T]):
         parts = []
+        pk_name = getattr(cls.Meta, "primary_key", "id")
         for name, field in cls.model_real_fields().items():
             field_type = field.annotation
             if field_type is None:
                 raise ValueError(f"Field '{name}' has no type annotation")
-            db_field_type = db.python_to_sql_type(field_type)
-            parts.append(f"{name} {db_field_type}")
+
+            if name == pk_name and is_int_type(field_type):
+                # Delegate to db backend for auto-increment PK SQL
+                parts.append(db.auto_increment_primary_key_sql(name))
+            else:
+                db_field_type = db.python_to_sql_type(field_type)
+                parts.append(f"{name} {db_field_type}")
         sql = f'CREATE TABLE IF NOT EXISTS "{cls.table_name()}" ({", ".join(parts)});'
         return await db.execute(sql)
 

@@ -48,8 +48,12 @@ class PostgresDatabase(BaseDatabase):
     async def fetchrow(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("select"):
-            raise ValueError("Fetchrow can only be used with SELECT queries")
+        # Allow SELECT and INSERT ... RETURNING queries
+        q = query.strip().lower()
+        if not (q.startswith("select") or (q.startswith("insert") and "returning" in q)):
+            raise ValueError(
+                "Fetchrow can only be used with SELECT or INSERT ... RETURNING queries"
+            )
         if not query.strip().endswith(";"):
             query += ";"
         return await self._conn.fetchrow(query, *args)
@@ -115,3 +119,7 @@ class PostgresDatabase(BaseDatabase):
             return "JSONB"
         else:
             raise TypeError(f"Unsupported Python type for SQL: {py_type}")
+
+    @staticmethod
+    def auto_increment_primary_key_sql(name: str) -> str:
+        return f"{name} SERIAL PRIMARY KEY"
