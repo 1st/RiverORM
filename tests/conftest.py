@@ -2,13 +2,14 @@ import pytest
 import pytest_asyncio
 
 from riverorm import Model, constants
+from riverorm.config import config
 from riverorm.db import BaseDatabase, get_database
 from tests.models import Order, Product, User
 
 
 @pytest.fixture(params=[constants.POSTGRES])  # TODO: Add constants.MYSQL
 def db(request: pytest.FixtureRequest) -> BaseDatabase:
-    return get_database(request.param, debug=True)
+    return get_database(request.param, debug=config.DEBUG)
 
 
 @pytest.fixture
