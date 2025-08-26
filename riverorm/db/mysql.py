@@ -4,16 +4,18 @@ import aiomysql
 
 from .base import BaseDatabase
 
-logger = logging.getLogger("riverorm.db.postgres")
+logger = logging.getLogger(__name__)
 
 
 class MySQLDatabase(BaseDatabase):
     _conn: aiomysql.Connection | None
     _debug: bool
+    _dsn: str
 
-    def __init__(self, debug: bool = False):
+    def __init__(self, dsn: str, debug: bool = False):
         self._conn = None
         self._debug = debug
+        self._dsn = dsn
         if debug:
             logger.setLevel(logging.DEBUG)
         else:
@@ -25,8 +27,8 @@ class MySQLDatabase(BaseDatabase):
         parts = dsn.split(";")
         return {k: v for k, v in (part.split("=") for part in parts if "=" in part)}
 
-    async def connect(self, dsn: str) -> None:
-        self._conn = await aiomysql.connect(**self.dsn_to_dict(dsn))
+    async def connect(self) -> None:
+        self._conn = await aiomysql.connect(**self.dsn_to_dict(self._dsn))
 
     async def close(self) -> None:
         if self._conn is None:
@@ -38,7 +40,7 @@ class MySQLDatabase(BaseDatabase):
             raise Exception("Connection is not established")
         if self._debug:
             logger.debug(f"SQL: {query} - {args}")
-        with self._conn.cursor() as cursor:
+        async with self._conn.cursor() as cursor:
             await cursor.execute(query, args)
             return cursor.rowcount
 

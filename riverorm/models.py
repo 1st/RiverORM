@@ -4,6 +4,7 @@ from typing import TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
+from riverorm import constants
 from riverorm.db import db
 from riverorm.utils import is_int_type
 
@@ -50,7 +51,7 @@ class Model(BaseModel):
 
     class Meta:
         table_name: str
-        primary_key: str = "id"
+        primary_key: str = constants.DEFAULT_PRIMARY_KEY
 
     @classmethod
     def table_name(cls) -> str:
@@ -152,7 +153,7 @@ class Model(BaseModel):
     @classmethod
     async def create_table(cls: type[T]):
         parts = []
-        pk_name = getattr(cls.Meta, "primary_key", "id")
+        pk_name = getattr(cls.Meta, "primary_key", constants.DEFAULT_PRIMARY_KEY)
         for name, field in cls.model_real_fields().items():
             field_type = field.annotation
             if field_type is None:
