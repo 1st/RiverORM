@@ -3,8 +3,13 @@ from typing import Any, Sequence
 
 
 class BaseDatabase(ABC):
+    is_connected: bool = False
+
     @abstractmethod
-    async def connect(self, dsn: str) -> None: ...
+    def __init__(self, dsn: str, debug: bool = False) -> None: ...
+
+    @abstractmethod
+    async def connect(self) -> None: ...
 
     @abstractmethod
     async def close(self) -> None: ...

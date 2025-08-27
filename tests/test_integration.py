@@ -1,18 +1,6 @@
 import pytest
-import pytest_asyncio
 
-from riverorm.config import config
-from riverorm.db import db
 from tests.models import User
-
-
-@pytest_asyncio.fixture(scope="function")
-async def db_setup_and_teardown():
-    await db.connect(config.POSTGRES_DSN)
-    await User.drop_table()
-    await User.create_table()
-    yield
-    await db.close()
 
 
 @pytest.mark.asyncio

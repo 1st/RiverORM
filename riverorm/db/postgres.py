@@ -6,28 +6,32 @@ import asyncpg
 
 from .base import BaseDatabase
 
-logger = logging.getLogger("riverorm.db.postgres")
+logger = logging.getLogger(__name__)
 
 
 class PostgresDatabase(BaseDatabase):
     _conn: asyncpg.Connection | None
     _debug: bool
+    _dsn: str
 
-    def __init__(self, debug: bool = False):
+    def __init__(self, dsn: str, debug: bool = False):
         self._conn = None
         self._debug = debug
+        self._dsn = dsn
         if debug:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
 
-    async def connect(self, dsn: str) -> None:
-        self._conn = await asyncpg.connect(dsn)
+    async def connect(self) -> None:
+        self._conn = await asyncpg.connect(self._dsn)
+        self.is_connected = True
 
     async def close(self) -> None:
         if self._conn is None:
             raise Exception("Connection is already closed")
         await self._conn.close()
+        self.is_connected = False
 
     async def execute(self, query: str, *args):
         if self._conn is None:
