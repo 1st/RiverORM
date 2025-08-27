@@ -57,7 +57,7 @@ class MySQLDatabase(BaseDatabase):
     async def close(self) -> None:
         if self._conn is None:
             raise Exception("Connection is already closed")
-        self._conn.close()
+        self._conn.close()  # MySQL driver still uses regular sync style for closing connection
         self.is_connected = False
 
     async def execute(self, query: str, *args):

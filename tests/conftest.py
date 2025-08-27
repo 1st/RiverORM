@@ -3,8 +3,7 @@ import pytest_asyncio
 
 from riverorm import Model, constants
 from riverorm.config import config
-from riverorm.db import MySQLDatabase, PostgresDatabase
-from riverorm.db.registry import DatabaseRegistry
+from riverorm.db import DatabaseRegistry, MySQLDatabase, PostgresDatabase
 from tests.models import Order, Product, User
 
 

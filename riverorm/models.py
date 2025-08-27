@@ -5,8 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
 from riverorm import constants
-from riverorm.db import BaseDatabase
-from riverorm.db.registry import DatabaseRegistry
+from riverorm.db import BaseDatabase, DatabaseRegistry
 from riverorm.utils import is_int_type
 
 T = TypeVar("T", bound="Model")
