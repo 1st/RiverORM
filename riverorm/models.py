@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
 from riverorm import constants
-from riverorm.db import db
+from riverorm.db import BaseDatabase, DatabaseRegistry
 from riverorm.utils import is_int_type
 
 T = TypeVar("T", bound="Model")
@@ -52,6 +52,13 @@ class Model(BaseModel):
     class Meta:
         table_name: str
         primary_key: str = constants.DEFAULT_PRIMARY_KEY
+        db_alias: str | None = None  # If None, use default connection
+
+    @classmethod
+    def db(cls) -> BaseDatabase:
+        """Get the database instance associated with this model."""
+        alias = getattr(cls.Meta, "db_alias", None)
+        return DatabaseRegistry.get(alias)
 
     @classmethod
     def table_name(cls) -> str:
@@ -106,7 +113,7 @@ class Model(BaseModel):
                 f'INSERT INTO "{self.table_name()}" ({cols}) VALUES ({placeholders}) '
                 f"RETURNING {pk_name}"
             )
-            row = await db.fetchrow(query, *values)
+            row = await self.db().fetchrow(query, *values)
             if row and pk_name in row:
                 setattr(self, pk_name, row[pk_name])
         else:
@@ -115,21 +122,19 @@ class Model(BaseModel):
             cols = ", ".join(f"{f} = ${i + 1}" for i, f in enumerate(fields))
             query = f'UPDATE "{self.table_name()}" SET {cols} WHERE {pk_name} = ${len(fields) + 1}'
             values.append(pk)
-            await db.update(query, *values)
-
+            await self.db().update(query, *values)
         # TODO: Update the instance with the new values from the database
-        # self.__dict__.update(**row)
         return self
 
     async def delete(self):
         pk_value = getattr(self, self.Meta.primary_key)
         query = f'DELETE FROM "{self.table_name()}" WHERE {self.Meta.primary_key} = $1'
-        await db.execute(query, pk_value)
+        await self.db().execute(query, pk_value)
 
     @classmethod
     async def all(cls: type[T], limit: int = 1000) -> list[T]:
         query = f'SELECT * FROM "{cls.table_name()}" LIMIT {limit};'
-        rows = await db.fetch(query)
+        rows = await cls.db().fetch(query)
         return [cls(**dict(row)) for row in rows]
 
     @classmethod
@@ -138,7 +143,7 @@ class Model(BaseModel):
         values = list(kwargs.values())
         conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
         query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions} LIMIT 1'
-        row = await db.fetchrow(query, *values)
+        row = await cls.db().fetchrow(query, *values)
         return cls(**row) if row else None
 
     @classmethod
@@ -147,11 +152,12 @@ class Model(BaseModel):
         values = list(kwargs.values())
         conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
         query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions}'
-        rows = await db.fetch(query, *values)
+        rows = await cls.db().fetch(query, *values)
         return [cls(**dict(r)) for r in rows]
 
     @classmethod
     async def create_table(cls: type[T]):
+        db = cls.db()
         parts = []
         pk_name = getattr(cls.Meta, "primary_key", constants.DEFAULT_PRIMARY_KEY)
         for name, field in cls.model_real_fields().items():
@@ -171,4 +177,4 @@ class Model(BaseModel):
     @classmethod
     async def drop_table(cls: type[T]):
         sql = f'DROP TABLE IF EXISTS "{cls.table_name()}";'
-        return await db.execute(sql)
+        return await cls.db().execute(sql)

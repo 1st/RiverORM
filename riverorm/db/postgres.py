@@ -25,11 +25,13 @@ class PostgresDatabase(BaseDatabase):
 
     async def connect(self) -> None:
         self._conn = await asyncpg.connect(self._dsn)
+        self.is_connected = True
 
     async def close(self) -> None:
         if self._conn is None:
             raise Exception("Connection is already closed")
         await self._conn.close()
+        self.is_connected = False
 
     async def execute(self, query: str, *args):
         if self._conn is None:
