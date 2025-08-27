@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -223,3 +224,10 @@ class Model(BaseModel):
     async def drop_table(cls: type[T]):
         sql = f'DROP TABLE IF EXISTS "{cls.table_name()}";'
         return await cls.db().execute(sql)
+
+
+class TimestampedModel(Model):
+    """Model with date-time field: created_at and updated_at."""
+
+    created_at: datetime | None = Field(default=None, description="Creation timestamp")
+    updated_at: datetime | None = Field(default=None, description="Last update timestamp")
