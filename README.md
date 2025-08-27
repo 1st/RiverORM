@@ -6,10 +6,10 @@ RiverORM - minimalistic ORM for Python with async support.
 ## Table of Contents
 
 - [Features](#riverorm-features)
+- [Quick Example](#quick-example)
 - [Usage](docs/USAGE.md) - a quickstart and usage guide.
 - [Installation](docs/INSTALL.md) - a guide to install RiverORM with optional database backends.
-- [Project Setup and Development](#project-setup-and-development)
-
+- [Project Setup and Development](docs/DEVELOPMENT.md) - development guide and instructions.
 
 ## RiverORM features
 
@@ -19,16 +19,7 @@ When compared to existing solutions, RiverORM offers several key advantages:
 
 2. **Unified model and schema (Pydantic):** Models inherit Pydantic validation, so there is one source of truth for field definitions. This eliminates duplication and leverages Pydantic’s power (nested validation, JSON schemas, etc). It’s like having Django’s migrations with SQLAlchemy’s flexibility; in fact, Piccolo similarly “uses Pydantic internally to serialize data”.
 
-3. **Lightweight and modern:** Unlike heavyweight ORMs _(SQLAlchemy)_ or fragmented stacks, our core is minimal and written in idiomatic Python. We will use modern syntax (e.g. int|None for optionals, pattern matching) and type hints aggressively, resulting in cleaner code and better auto-completion. For example, creating a model in our ORM will be as simple as:
-
-```python
-from riverorm import Field, Model
-
-class Product(Model):
-    id: int = Field(pk=True)
-    name: str
-```
-_(This minimal style draws inspiration from Peewee’s compact definitions and SQLModel’s type-annotated models)._
+3. **Lightweight and modern:** Unlike heavyweight ORMs _(SQLAlchemy)_ or fragmented stacks, our core is minimal and written in idiomatic Python. We use modern syntax (e.g. int|None for optionals, pattern matching) and type hints aggressively, resulting in cleaner code and better auto-completion.
 
 4. **Fine-grained query control:** Users can explicitly specify when to join or prefetch related tables. By default, related fields load lazily; but the API will offer methods to eagerly fetch joins when needed. At all times, developers can log or inspect the SQL (a feature SQLAlchemy provides) to avoid surprises. In other words, “everything [the ORM does] is ultimately the result of a developer-initiated decision,” just as SQLAlchemy’s philosophy states.
 
@@ -44,67 +35,47 @@ In summary, our ORM will fill the gap for a compact, async-first, Pydantic-power
 
 Read more details about our [mission](docs/MISSION.md).
 
+## Quick Example
 
-## Project Setup and Development
+A minimal but complete example showing async usage, model definition, and multi-database support:
 
-### Prerequisites
+```python
+from riverorm import Field, Model
+from riverorm.db import DatabaseRegistry, MySQLDatabase, PostgresDatabase
 
-Before you start, ensure you copy the example environment file and edit it to include your database connection strings:
-```sh
-cp .env.example .env
+# Register connections
+DatabaseRegistry.register("db1", PostgresDatabase("postgresql://user:pass@localhost/db1"))
+DatabaseRegistry.register("db2", MySQLDatabase("mysql://user:pass@localhost/db2"))
+DatabaseRegistry.register("db3", MySQLDatabase("mysql://user:pass@localhost/db3", debug=True))
+DatabaseRegistry.set_default("db1")
+
+# Define models
+class User(Model):
+    id: int | None = Field(default=None, pk=True)
+    username: str
+
+class Product(Model):
+    id: int | None = Field(default=None, pk=True)
+    name: str
+    price: float
+    in_stock: bool = Field(False)
+
+    class Meta:
+        db_alias = "db2"  # Use the MySQL connection
+
+# Async usage
+async def main():
+    # Create tables
+    await User.create_table()
+    await Product.create_table()
+    # Make queries
+    user = User(username="alice")
+    await user.save()
+    Product(name="Laptop", price=2_499.99).save()
+    Product(name="Phone", price=799.99, in_stock=True).save()
+    # Filtering
+    users = await User.all()
+    products = await Product.filter(in_stock=True)
 ```
 
-### Initial Setup
-
-To set up the project and install all dependencies, run:
-
-```sh
-make setup
-```
-
-This will:
-- Install system dependencies (e.g., uv)
-- Create a Python virtual environment using `uv`
-- Install all Python dependencies
-
-### Starting Database Containers (Optional)
-
-If you do not already have a database running locally, you can start the required database services using Docker:
-
-```sh
-make docker-up
-```
-
-This will run `docker compose` to start the database containers defined in `docker-compose.yml`.
-
-If you prefer to use your own local database, you can skip this step.
-
-### Running Tests
-
-To run the test suite:
-
-```sh
-make test
-```
-
-Some tests require a running database, so ensure you have one available (either via Docker or locally). The tests will automatically connect to the database specified in the `POSTGRES_DSN` environment variable.
-
-Find all tests in the `tests` directory. The tests are run using `pytest`, which provides a detailed output of the test results.
-
-### Code Checks (Linting & Formatting)
-
-To check code style and formatting:
-
-```sh
-make lint
-```
-
-This will run `ruff` for linting and formatting checks on the codebase.
-
-### Install pre-commit hooks
-
-Pre-commit hooks help maintain code quality by running checks before commits. To install them, run:
-
-```bash
-pre-commit install
-```
+See the [Usage Guide](docs/USAGE.md) for more details and advanced examples.
