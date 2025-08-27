@@ -54,3 +54,10 @@ class DatabaseRegistry:
         for db in cls._connections.values():
             if not db.is_connected:
                 await db.connect()
+
+    @classmethod
+    async def close(cls):
+        """Close all registered database connections."""
+        for db in cls._connections.values():
+            if db.is_connected:
+                await db.close()

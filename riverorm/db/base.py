@@ -3,6 +3,8 @@ from typing import Any, Sequence
 
 
 class BaseDatabase(ABC):
+    is_connected: bool = False
+
     @abstractmethod
     def __init__(self, dsn: str, debug: bool = False) -> None: ...
 
