@@ -71,8 +71,8 @@ async def main():
     # Make queries
     user = User(username="alice")
     await user.save()
-    Product(name="Laptop", price=2_499.99).save()
-    Product(name="Phone", price=799.99, in_stock=True).save()
+    await Product(name="Laptop", price=2_499.99).save()
+    await Product(name="Phone", price=799.99, in_stock=True).save()
     # Filtering
     users = await User.all()
     products = await Product.filter(in_stock=True)
