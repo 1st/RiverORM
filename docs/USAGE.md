@@ -74,19 +74,40 @@ class Product(Model):
 ```
 
 The primary key is the `id` field by default. To use a different primary key,
-set it on the model's `Meta`:
+mark a field with `Field(primary_key=True)`:
 
 ```python
 class Product(Model):
-    sku: str
+    sku: str = Field(primary_key=True)
     name: str
-
-    class Meta:
-        primary_key = "sku"
 ```
 
-> **Note:** the primary key is configured via `Meta.primary_key` (default `"id"`),
-> not via a `Field(pk=True)` argument.
+(Setting `Meta.primary_key = "sku"` also works.) Once a row is persisted, its
+primary key is **protected** — reassigning it on a saved instance raises
+`PrimaryKeyError`.
+
+### Field options
+
+`Field()` is RiverORM's thin wrapper around Pydantic's `Field`. It accepts all
+the usual Pydantic arguments plus schema metadata used for DDL and querying:
+
+| Option | Meaning |
+| --- | --- |
+| `primary_key=True` | Use this column as the primary key. |
+| `index=True` | Create an index for this column. |
+| `unique=True` | Add a unique constraint. |
+| `db_column="..."` | Override the database column name. |
+| `max_length=N` | Maximum length (also enforced by Pydantic validation). |
+
+```python
+class User(Model):
+    id: int | None = Field(default=None)
+    username: str = Field(unique=True, max_length=50)
+    email: str | None = Field(default=None, index=True)
+```
+
+> **Note:** the deprecated `Field(pk=True)` still works but emits a
+> `DeprecationWarning` — prefer `Field(primary_key=True)`.
 
 ---
 
@@ -124,14 +145,17 @@ Choose how related data is fetched:
 
 ```python
 # select_related: a single SQL JOIN, best for forward (to-one) relations
-orders = await Order.select_related("user", "product").all()
+orders = await Order.objects.select_related("user", "product").all()
 print(orders[0].user.username)
 
 # load_related: one batched query per relation (avoids N+1); works for
 # forward, reverse, and nested ("__") relations
-users = await User.load_related("orders").all()
-paid = await Order.load_related("product__user").filter(status="paid")
+users = await User.objects.load_related("orders").all()
+paid = await Order.objects.load_related("product__user").filter(status="paid")
 ```
+
+Eager loading composes with the rest of the query API (filtering, ordering,
+limits) described under [Querying](#querying) below.
 
 ---
 
@@ -153,17 +177,59 @@ await order.save()
 
 ---
 
-## Async Usage
+## Querying
 
-All database operations are async.
+Every model exposes a chainable, lazy query API through `Model.objects`. Each
+method returns a **new** `QuerySet`, and **nothing touches the database until you
+`await`** it (or call a terminal such as `get()` / `count()`):
 
 ```python
-# Fetch a single row
-product = await Product.get(id=1)
+# Build and execute a query
+users = await User.objects.filter(is_active=True).order_by("-id").limit(10)
 
-# Fetch many rows, optionally with field lookups
-products = await Product.filter(in_stock=True, price__gte=500, price__lt=1000)
-everything = await Product.all()
+# QuerySets are lazy and reusable — chaining never mutates the original
+active = User.objects.filter(is_active=True)
+recent = await active.order_by("-id").limit(5)   # `active` is unchanged
+
+# Eager loading composes with filtering / ordering / limits
+orders = await Order.objects.select_related("user").filter(status="paid").order_by("-id")
+```
+
+### Chaining methods
+
+| Method | Effect |
+| --- | --- |
+| `filter(**lookups)` | Add `AND` conditions (see lookups below). |
+| `exclude(**lookups)` | Add negated (`NOT`) conditions. |
+| `order_by("-id", "name")` | Order rows (leading `-` = descending). |
+| `limit(n)` / `offset(n)` | Slice the result set. |
+| `select_related(*fields)` | Eager-load forward relations via a `JOIN`. |
+| `load_related(*fields)` | Batched eager loading (forward / reverse / nested). |
+
+### Terminal methods (await these)
+
+| Method | Returns |
+| --- | --- |
+| `await qs` / `qs.all()` | `list[Model]` of all matches. |
+| `first()` | The first match, or `None`. |
+| `get(**lookups)` | Exactly one match; raises `DoesNotExist` or `MultipleObjectsReturned`. |
+| `count()` | Number of matching rows. |
+| `exists()` | `True` if any row matches. |
+
+```python
+product = await Product.objects.get(id=1)
+n = await Product.objects.filter(in_stock=True).count()
+if await User.objects.filter(username="alice").exists():
+    ...
+```
+
+All database operations are async. To create, update, or delete a single row,
+use the instance methods:
+
+```python
+# Insert: leave the primary key unset; it is filled in after save()
+product = Product(name="Laptop", price=999.99)
+await product.save()
 
 # Update: change attributes and save (an existing primary key triggers UPDATE)
 product.name = "Apple MacBook"
@@ -175,7 +241,8 @@ await product.delete()
 
 ### Filter lookups
 
-`filter()` accepts Django-style field lookups via a `field__operator` suffix:
+`filter()`, `exclude()`, and `get()` accept Django-style field lookups via a
+`field__operator` suffix:
 
 | Lookup        | SQL        | Example                         |
 | ------------- | ---------- | ------------------------------- |
@@ -189,6 +256,22 @@ await product.delete()
 | `field__in`   | `IN (...)` | `filter(id__in=[1, 2, 3])`      |
 
 Multiple lookups are combined with `AND`.
+
+> **Shortcut classmethods:** `Model.all()`, `Model.get()`, `Model.filter()`,
+> `Model.select_related()`, and `Model.load_related()` remain as thin wrappers
+> around `Model.objects` for quick one-off queries.
+
+---
+
+## Databases
+
+RiverORM speaks both **PostgreSQL** (via `asyncpg`) and **MySQL** (via `aiomysql`)
+from the same model code — backend differences (placeholders, quoting, types,
+auto-increment, `RETURNING` vs `lastrowid`) are handled by an internal SQL
+dialect, so you never write database-specific SQL. Register connections and
+point models at them with `Meta.db_alias` as shown in
+[Database Connections](#database-connections-and-model-mapping) above. SQLite
+support is planned.
 
 ---
 

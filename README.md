@@ -74,12 +74,12 @@ async def main():
     await user.save()
     await Product(name="Laptop", price=2_499.99, user_id=user.id).save()
     await Product(name="Phone", price=799.99, in_stock=True, user_id=user.id).save()
-    # Query
-    users = await User.all()
-    cheap = await Product.filter(in_stock=True, price__lt=1000)
+    # Query with the chainable, lazy `objects` API (nothing runs until awaited)
+    cheap = await Product.objects.filter(in_stock=True, price__lt=1000).order_by("-price")
+    count = await Product.objects.filter(in_stock=True).count()
     # Eager-load relations without writing SQL (JOIN or batched, your choice)
-    products = await Product.select_related("user").all()        # one JOIN query
-    owners = await User.load_related("products").all()           # batched, avoids N+1
+    products = await Product.objects.select_related("user").all()   # one JOIN query
+    owners = await User.objects.load_related("products").all()      # batched, avoids N+1
 ```
 
 See the [Usage Guide](docs/USAGE.md) for more details and advanced examples.
