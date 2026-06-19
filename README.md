@@ -51,14 +51,15 @@ DatabaseRegistry.set_default("db1")
 
 # Define models
 class User(Model):
-    id: int | None = Field(default=None, pk=True)
+    id: int | None = Field(default=None)  # `id` is the primary key by default
     username: str
 
 class Product(Model):
-    id: int | None = Field(default=None, pk=True)
+    id: int | None = Field(default=None)
     name: str
     price: float
     in_stock: bool = Field(False)
+    user_id: int | None = Field(default=None)  # foreign key to User
 
     class Meta:
         db_alias = "db2"  # Use the MySQL connection
@@ -68,14 +69,17 @@ async def main():
     # Create tables
     await User.create_table()
     await Product.create_table()
-    # Make queries
+    # Insert rows (the generated primary key is set back on the instance)
     user = User(username="alice")
     await user.save()
-    await Product(name="Laptop", price=2_499.99).save()
-    await Product(name="Phone", price=799.99, in_stock=True).save()
-    # Filtering
+    await Product(name="Laptop", price=2_499.99, user_id=user.id).save()
+    await Product(name="Phone", price=799.99, in_stock=True, user_id=user.id).save()
+    # Query
     users = await User.all()
-    products = await Product.filter(in_stock=True)
+    cheap = await Product.filter(in_stock=True, price__lt=1000)
+    # Eager-load relations without writing SQL (JOIN or batched, your choice)
+    products = await Product.select_related("user").all()        # one JOIN query
+    owners = await User.load_related("products").all()           # batched, avoids N+1
 ```
 
 See the [Usage Guide](docs/USAGE.md) for more details and advanced examples.
