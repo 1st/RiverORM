@@ -48,32 +48,22 @@ class PostgresDatabase(BaseDatabase):
     async def fetch(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("select"):
-            raise ValueError("Fetch can only be used with SELECT queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         return await self._conn.fetch(query, *args)
 
     async def fetchrow(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        # Allow SELECT and INSERT ... RETURNING queries
-        q = query.strip().lower()
-        if not (q.startswith("select") or (q.startswith("insert") and "returning" in q)):
-            raise ValueError(
-                "Fetchrow can only be used with SELECT or INSERT ... RETURNING queries"
-            )
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         return await self._conn.fetchrow(query, *args)
 
     async def update(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("update"):
-            raise ValueError("Update can only be used with UPDATE queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         return await self._conn.execute(query, *args)
 
     async def execute_insert(self, query: str, *args):

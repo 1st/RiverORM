@@ -81,10 +81,8 @@ class MySQLDatabase(BaseDatabase):
     async def fetch(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("select"):
-            raise ValueError("Fetch can only be used with SELECT queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         async with self._conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(query, args)
             return await cursor.fetchall()
@@ -92,10 +90,8 @@ class MySQLDatabase(BaseDatabase):
     async def fetchrow(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("select"):
-            raise ValueError("Fetchrow can only be used with SELECT queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         async with self._conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(query, args)
             return await cursor.fetchone()
@@ -103,10 +99,8 @@ class MySQLDatabase(BaseDatabase):
     async def update(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("update"):
-            raise ValueError("Update can only be used with UPDATE queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         async with self._conn.cursor() as cursor:
             await cursor.execute(query, args)
             return cursor.rowcount
