@@ -53,6 +53,7 @@ class Condition:
     column: Column
     operator: Operator
     value: Any
+    negated: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,7 @@ class SelectQuery:
     order_by: tuple[OrderBy, ...] = ()
     limit: int | None = None
     offset: int | None = None
+    count: bool = False
 
 
 @dataclass(frozen=True)

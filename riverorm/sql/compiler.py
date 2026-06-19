@@ -32,11 +32,12 @@ class Compiler:
 
     def compile_select(self, query: SelectQuery) -> tuple[str, list[Any]]:
         params: list[Any] = []
-        columns = (
-            ", ".join(self._render_column(c, projection=True) for c in query.columns)
-            if query.columns
-            else "*"
-        )
+        if query.count:
+            columns = "COUNT(*)"
+        elif query.columns:
+            columns = ", ".join(self._render_column(c, projection=True) for c in query.columns)
+        else:
+            columns = "*"
         table = self.dialect.quote(query.table)
         if query.table_alias:
             table = f"{table} AS {self.dialect.quote(query.table_alias)}"
@@ -117,6 +118,10 @@ class Compiler:
                 self.dialect.placeholder(len(params) + i + 1) for i in range(len(values))
             )
             params.extend(values)
-            return f"{col} IN ({placeholders})"
-        params.append(condition.value)
-        return f"{col} {condition.operator.value} {self.dialect.placeholder(len(params))}"
+            clause = f"{col} IN ({placeholders})"
+        else:
+            params.append(condition.value)
+            clause = f"{col} {condition.operator.value} {self.dialect.placeholder(len(params))}"
+        if condition.negated:
+            return f"NOT ({clause})"
+        return clause
