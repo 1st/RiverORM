@@ -27,7 +27,7 @@ This will:
 If you do not already have a database running locally, you can start the required database services using Docker:
 
 ```sh
-make docker-up
+make docker-start
 ```
 
 This will run `docker compose` to start the database containers defined in `docker-compose.yml`.
@@ -62,4 +62,9 @@ Pre-commit hooks help maintain code quality by running checks before commits. To
 
 ```bash
 pre-commit install
+```
+
+To disable `pre-commit` run:
+```bash
+pre-commit uninstall
 ```

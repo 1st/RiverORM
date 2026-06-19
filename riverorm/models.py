@@ -1,5 +1,7 @@
 import re
-from typing import TypeVar
+from collections.abc import Sequence
+from datetime import datetime
+from typing import Any, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
@@ -9,6 +11,39 @@ from riverorm.db import BaseDatabase, DatabaseRegistry
 from riverorm.utils import is_int_type
 
 T = TypeVar("T", bound="Model")
+
+
+def _camel_to_snake(name: str) -> str:
+    """Convert a CamelCase class name to snake_case (e.g. OrderItem -> order_item)."""
+    name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    name = re.sub(r"([a-z])([A-Z0-9])", r"\1_\2", name)
+    name = re.sub(r"(\d)([A-Z][a-z])", r"\1_\2", name)
+    return name.lower()
+
+
+def _related_model_from_annotation(annotation: Any) -> tuple[type["Model"] | None, bool]:
+    """
+    Inspect a field annotation and return ``(related_model, is_collection)``.
+
+    Handles ``Model``, ``Model | None``, ``Optional[Model]`` and ``list[Model]`` /
+    ``set[Model]`` / ``tuple[Model, ...]``. Returns ``(None, False)`` for scalar fields.
+    """
+    origin = get_origin(annotation)
+    if origin in (list, set, tuple):
+        args = get_args(annotation)
+        inner = _single_model(args[0]) if args else None
+        return (inner, True)
+    return (_single_model(annotation), False)
+
+
+def _single_model(annotation: Any) -> type["Model"] | None:
+    """Return the ``Model`` subclass referenced by an annotation, unwrapping ``| None``."""
+    if isinstance(annotation, type) and issubclass(annotation, Model):
+        return annotation
+    for arg in get_args(annotation):
+        if isinstance(arg, type) and issubclass(arg, Model):
+            return arg
+    return None
 
 
 class Model(BaseModel):
@@ -62,27 +97,25 @@ class Model(BaseModel):
 
     @classmethod
     def table_name(cls) -> str:
-        def camel_to_snake(name: str) -> str:
-            name = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
-            name = re.sub(r"([a-z])([A-Z0-9])", r"\1_\2", name)
-            name = re.sub(r"(\d)([A-Z][a-z])", r"\1_\2", name)
-            return name.lower()
-
         name: str | None = getattr(cls.Meta, "table_name", None)
         if not name:
-            return camel_to_snake(cls.__name__)
+            return _camel_to_snake(cls.__name__)
         return name
 
     @classmethod
     def model_virtual_fields(cls) -> dict[str, FieldInfo]:
         """
-        Returns a dictionary of model fields with their names as keys and Field objects as values.
+        Returns the relation fields (foreign keys and reverse/collection relations).
+
+        A field is "virtual" when its annotation references another ``Model`` directly
+        (``user: User`` / ``user: User | None``) or as a collection (``orders: list[Order]``).
+        These are populated by ``select_related`` / ``load_related`` and are never stored
+        as columns.
         """
         return {
             name: field
             for name, field in cls.model_fields.items()
-            if getattr(field.annotation, "__origin__", None) in (list, tuple)
-            or (isinstance(field.annotation, type) and issubclass(field.annotation, Model))
+            if _related_model_from_annotation(field.annotation)[0] is not None
         }
 
     @classmethod
@@ -133,6 +166,7 @@ class Model(BaseModel):
 
     @classmethod
     async def all(cls: type[T], limit: int = 1000) -> list[T]:
+        """Fetch all rows for this model (up to the given limit)."""
         query = f'SELECT * FROM "{cls.table_name()}" LIMIT {limit};'
         rows = await cls.db().fetch(query)
         return [cls(**dict(row)) for row in rows]
@@ -148,12 +182,249 @@ class Model(BaseModel):
 
     @classmethod
     async def filter(cls: type[T], **kwargs) -> list[T]:
-        keys = list(kwargs.keys())
-        values = list(kwargs.values())
-        conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
-        query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions}'
+        """
+        Filter rows using field lookups, e.g. age__gt=18, name="foo".
+        Supported operators: __gt, __lt, __gte, __lte, __ne, __eq (default), __in
+        """
+        ops = {
+            "gt": ">",
+            "lt": "<",
+            "gte": ">=",
+            "lte": "<=",
+            "ne": "!=",
+            "eq": "=",
+            "in": "IN",
+        }
+        conditions = []
+        values: list = []
+        param_idx = 1
+        for key, value in kwargs.items():
+            if "__" in key:
+                field, op = key.rsplit("__", 1)
+                sql_op = ops.get(op)
+                if not sql_op:
+                    raise ValueError(f"Unsupported filter operator: {op}")
+                if op == "in":
+                    assert isinstance(value, (list, tuple)), (
+                        "__in operator requires a list or tuple"
+                    )
+                    placeholders = ", ".join(f"${param_idx + i}" for i in range(len(value)))
+                    conditions.append(f"{field} IN ({placeholders})")
+                    values.extend(value)
+                    param_idx += len(value)
+                else:
+                    conditions.append(f"{field} {sql_op} ${param_idx}")
+                    values.append(value)
+                    param_idx += 1
+            else:
+                conditions.append(f"{key} = ${param_idx}")
+                values.append(value)
+                param_idx += 1
+        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+        query = f'SELECT * FROM "{cls.table_name()}"{where}'
         rows = await cls.db().fetch(query, *values)
         return [cls(**dict(r)) for r in rows]
+
+    @classmethod
+    def select_related(cls: type[T], *related_fields) -> type[T]:
+        """
+        Returns a subclass of the model that fetches related objects using SQL JOIN for FK fields.
+        Only supports direct foreign key relationships (e.g., user_id -> User).
+        """
+        base_table = cls.table_name()
+        model_fields = cls.model_real_fields()
+        # Build mapping: related_field -> (fk_field, related_model)
+        rel_map = {}
+        import sys
+
+        mod = sys.modules[cls.__module__]
+        for rel in related_fields:
+            fk_field = f"{rel}_id"
+            if fk_field not in model_fields:
+                raise ValueError(f"No foreign key field '{fk_field}' for related field '{rel}'")
+            related_model = getattr(mod, rel.capitalize(), None)
+            if related_model is None:
+                raise ValueError(f"Related model class for '{rel}' not found in module {mod}")
+            rel_map[rel] = (fk_field, related_model)
+
+        async def all(cls, limit: int = 1000):
+            base_alias = base_table
+            select_cols = [f'"{base_alias}"."{f}"' for f in model_fields.keys()]
+            join_clauses = []
+            for rel, (fk_field, related_model) in rel_map.items():
+                rel_table = related_model.table_name()
+                rel_alias = rel_table
+                rel_cols = [
+                    f'"{rel_alias}"."{col}" AS {rel}__{col}'
+                    for col in related_model.model_real_fields().keys()
+                ]
+                select_cols.extend(rel_cols)
+                join_clauses.append(
+                    f'LEFT JOIN "{rel_table}" AS "{rel_alias}" '
+                    f'ON "{base_alias}"."{fk_field}" = "{rel_alias}"."id"'
+                )
+            select_sql = ", ".join(select_cols)
+            joins = " ".join(join_clauses)
+            query = (
+                f'SELECT {select_sql} FROM "{base_table}" AS "{base_alias}" {joins} LIMIT {limit};'
+            )
+            rows = await cls.db().fetch(query)
+            return [cls._hydrate_with_related(row) for row in rows]
+
+        async def filter(cls, **kwargs):
+            base_alias = base_table
+            select_cols = [f'"{base_alias}"."{f}"' for f in model_fields.keys()]
+            join_clauses = []
+            for rel, (fk_field, related_model) in rel_map.items():
+                rel_table = related_model.table_name()
+                rel_alias = rel_table
+                rel_cols = [
+                    f'"{rel_alias}"."{col}" AS {rel}__{col}'
+                    for col in related_model.model_real_fields().keys()
+                ]
+                select_cols.extend(rel_cols)
+                join_clauses.append(
+                    f'LEFT JOIN "{rel_table}" AS "{rel_alias}" '
+                    f'ON "{base_alias}"."{fk_field}" = "{rel_alias}"."id"'
+                )
+            select_sql = ", ".join(select_cols)
+            joins = " ".join(join_clauses)
+            conditions = []
+            values = []
+            param_idx = 1
+            for key, value in kwargs.items():
+                conditions.append(f'"{base_alias}"."{key}" = ${param_idx}')
+                values.append(value)
+                param_idx += 1
+            where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+            query = f'SELECT {select_sql} FROM "{base_table}" AS "{base_alias}" {joins}{where};'
+            rows = await cls.db().fetch(query, *values)
+            return [cls._hydrate_with_related(row) for row in rows]
+
+        def _hydrate_with_related(cls, row):
+            base_data = {}
+            related_objs = {}
+            for k, v in dict(row).items():
+                if "__" in k:
+                    rel, col = k.split("__", 1)
+                    related_objs.setdefault(rel, {})[col] = v
+                else:
+                    base_data[k] = v
+            obj = cls(**base_data)
+            for rel, (fk_field, related_model) in rel_map.items():
+                rel_data = related_objs.get(rel)
+                if rel_data and rel_data.get("id") is not None:
+                    obj.__dict__[rel] = related_model(**rel_data)
+                else:
+                    obj.__dict__[rel] = None
+            return obj
+
+        RelatedSelected = type(
+            f"{cls.__name__}RelatedSelected",
+            (cls,),
+            {
+                "_select_related": related_fields,
+                "_rel_map": rel_map,
+                "all": classmethod(all),
+                "filter": classmethod(filter),
+                "_hydrate_with_related": classmethod(_hydrate_with_related),
+                "table_name": classmethod(lambda c: cls.table_name()),
+            },
+        )
+        return RelatedSelected
+
+    @classmethod
+    def load_related(cls: type[T], *related_fields: str) -> type[T]:
+        """
+        Eagerly load related objects, avoiding N+1 queries.
+
+        Unlike :meth:`select_related` (which uses a SQL JOIN), this issues one extra
+        batched query per relation and stitches the results in Python. It works for both
+        forward foreign keys (``order.user`` via ``user_id``) and reverse relations
+        (``user.orders``), and supports nesting with ``__`` (e.g. ``"product__user"``).
+
+        Example::
+
+            users = await User.load_related("orders", "products").all()
+            orders = await Order.load_related("user", "product__user").filter(status="paid")
+        """
+        specs = list(related_fields)
+        parent_all = cls.all
+        parent_filter = cls.filter
+
+        async def all(_inner: type[T], limit: int = 1000) -> list[T]:
+            objs = await parent_all(limit=limit)
+            await cls._prefetch_related(objs, specs)
+            return objs
+
+        async def filter(_inner: type[T], **kwargs: Any) -> list[T]:
+            objs = await parent_filter(**kwargs)
+            await cls._prefetch_related(objs, specs)
+            return objs
+
+        return type(
+            f"{cls.__name__}WithRelated",
+            (cls,),
+            {"all": classmethod(all), "filter": classmethod(filter)},
+        )
+
+    @classmethod
+    async def _prefetch_related(cls, objects: Sequence["Model"], specs: list[str]) -> None:
+        """Populate the relations named in ``specs`` on ``objects`` with batched queries."""
+        if not objects or not specs:
+            return
+
+        # Group ``"product__user"`` style specs by their root relation.
+        groups: dict[str, list[str]] = {}
+        for spec in specs:
+            root, _, rest = spec.partition("__")
+            groups.setdefault(root, [])
+            if rest:
+                groups[root].append(rest)
+
+        for root, nested in groups.items():
+            related_model, is_collection = _related_model_from_annotation(
+                cls.model_fields[root].annotation if root in cls.model_fields else None
+            )
+            if related_model is None:
+                raise ValueError(f"'{root}' is not a relation on {cls.__name__}")
+
+            if is_collection:
+                children = await cls._prefetch_reverse(objects, root, related_model)
+            else:
+                children = await cls._prefetch_forward(objects, root, related_model)
+
+            if nested:
+                await related_model._prefetch_related(children, nested)
+
+    @classmethod
+    async def _prefetch_forward(
+        cls, objects: Sequence["Model"], root: str, related_model: type["Model"]
+    ) -> list["Model"]:
+        """Load a forward FK relation (``cls`` has ``<root>_id``) and attach single objects."""
+        fk = f"{root}_id"
+        ids = {getattr(obj, fk) for obj in objects if getattr(obj, fk, None) is not None}
+        related = await related_model.filter(id__in=list(ids)) if ids else []
+        by_pk = {getattr(r, r.Meta.primary_key): r for r in related}
+        for obj in objects:
+            obj.__dict__[root] = by_pk.get(getattr(obj, fk, None))
+        return [obj.__dict__[root] for obj in objects if obj.__dict__.get(root) is not None]
+
+    @classmethod
+    async def _prefetch_reverse(
+        cls, objects: Sequence["Model"], root: str, related_model: type["Model"]
+    ) -> list["Model"]:
+        """Load a reverse relation (related rows point back via ``<cls>_id``) as lists."""
+        back_fk = f"{_camel_to_snake(cls.__name__)}_id"
+        pk = cls.Meta.primary_key
+        ids = [getattr(obj, pk) for obj in objects if getattr(obj, pk, None) is not None]
+        related = await related_model.filter(**{f"{back_fk}__in": ids}) if ids else []
+        grouped: dict[Any, list[Model]] = {}
+        for row in related:
+            grouped.setdefault(getattr(row, back_fk), []).append(row)
+        for obj in objects:
+            obj.__dict__[root] = grouped.get(getattr(obj, pk, None), [])
+        return related
 
     @classmethod
     async def create_table(cls: type[T]):
@@ -178,3 +449,10 @@ class Model(BaseModel):
     async def drop_table(cls: type[T]):
         sql = f'DROP TABLE IF EXISTS "{cls.table_name()}";'
         return await cls.db().execute(sql)
+
+
+class TimestampedModel(Model):
+    """Model with date-time field: created_at and updated_at."""
+
+    created_at: datetime | None = Field(default=None, description="Creation timestamp")
+    updated_at: datetime | None = Field(default=None, description="Last update timestamp")
