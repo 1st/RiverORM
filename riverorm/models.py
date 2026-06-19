@@ -1,13 +1,19 @@
 import re
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, TypeVar, get_args, get_origin
+from typing import Any, ClassVar, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.fields import FieldInfo
 
 from riverorm import constants
 from riverorm.db import BaseDatabase, DatabaseRegistry
+from riverorm.queryset import (
+    DoesNotExist,
+    ManagerDescriptor,
+    MultipleObjectsReturned,
+    QuerySet,
+)
 from riverorm.sql import (
     Column,
     Condition,
@@ -15,7 +21,6 @@ from riverorm.sql import (
     InsertQuery,
     Join,
     Operator,
-    SelectQuery,
     UpdateQuery,
 )
 from riverorm.utils import is_int_type
@@ -93,6 +98,13 @@ class Model(BaseModel):
     )
 
     id: int | None = Field(default=None, description="Primary key ID")
+
+    #: Entry point to the chainable query API: ``User.objects.filter(...)``.
+    objects: ClassVar[ManagerDescriptor] = ManagerDescriptor()
+
+    #: Raised by ``get()`` when no row matches / more than one row matches.
+    DoesNotExist: ClassVar[type[Exception]] = DoesNotExist
+    MultipleObjectsReturned: ClassVar[type[Exception]] = MultipleObjectsReturned
 
     class Meta:
         table_name: str
@@ -229,182 +241,130 @@ class Model(BaseModel):
 
     @classmethod
     async def all(cls: type[T], limit: int = 1000) -> list[T]:
-        """Fetch all rows for this model (up to the given limit)."""
-        db = cls.db()
-        query = SelectQuery(table=cls.table_name(), limit=limit)
-        sql, params = db.compiler.compile_select(query)
-        rows = await db.fetch(sql, *params)
-        return [cls(**dict(row)) for row in rows]
+        """Fetch all rows for this model (up to the given limit).
+
+        Back-compat wrapper delegating to the :class:`QuerySet` API.
+        """
+        return await cls.objects.limit(limit).all()
 
     @classmethod
-    async def get(cls: type[T], **kwargs) -> T | None:
-        db = cls.db()
-        query = SelectQuery(
-            table=cls.table_name(),
-            where=cls._conditions_from_kwargs(kwargs),
-            limit=1,
-        )
-        sql, params = db.compiler.compile_select(query)
-        row = await db.fetchrow(sql, *params)
-        return cls(**dict(row)) if row else None
+    async def get(cls: type[T], **kwargs: Any) -> T | None:
+        """Return the first row matching ``kwargs`` (or ``None``).
+
+        Back-compat wrapper preserving the historical "one-or-None" behaviour;
+        use ``Model.objects.get(...)`` for strict ``DoesNotExist`` semantics.
+        """
+        return await cls.objects.filter(**kwargs).first()
 
     @classmethod
-    async def filter(cls: type[T], **kwargs) -> list[T]:
+    async def filter(cls: type[T], **kwargs: Any) -> list[T]:
         """
         Filter rows using field lookups, e.g. age__gt=18, name="foo".
         Supported operators: __gt, __lt, __gte, __lte, __ne, __eq (default), __in
+
+        Back-compat wrapper delegating to the :class:`QuerySet` API.
         """
-        db = cls.db()
-        query = SelectQuery(
-            table=cls.table_name(),
-            where=cls._conditions_from_kwargs(kwargs),
-        )
-        sql, params = db.compiler.compile_select(query)
-        rows = await db.fetch(sql, *params)
-        return [cls(**dict(r)) for r in rows]
+        return await cls.objects.filter(**kwargs).all()
 
     @classmethod
-    def select_related(cls: type[T], *related_fields) -> type[T]:
+    def _build_rel_map(cls, related_fields: Sequence[str]) -> dict[str, tuple[str, type["Model"]]]:
+        """Map each ``select_related`` field to its ``(fk_field, related_model)``.
+
+        Only direct forward foreign keys are supported (e.g. ``user`` via
+        ``user_id``). The related model is resolved from the field annotation,
+        falling back to a class named like the field in the model's module.
         """
-        Returns a subclass of the model that fetches related objects using SQL JOIN for FK fields.
-        Only supports direct foreign key relationships (e.g., user_id -> User).
-        """
-        base_table = cls.table_name()
-        model_fields = cls.model_real_fields()
-        # Build mapping: related_field -> (fk_field, related_model)
-        rel_map = {}
         import sys
 
+        model_fields = cls.model_real_fields()
         mod = sys.modules[cls.__module__]
+        rel_map: dict[str, tuple[str, type[Model]]] = {}
         for rel in related_fields:
             fk_field = f"{rel}_id"
             if fk_field not in model_fields:
                 raise ValueError(f"No foreign key field '{fk_field}' for related field '{rel}'")
-            related_model = getattr(mod, rel.capitalize(), None)
+            related_model: type[Model] | None = None
+            if rel in cls.model_fields:
+                related_model = _related_model_from_annotation(cls.model_fields[rel].annotation)[0]
+            if related_model is None:
+                related_model = getattr(mod, rel.capitalize(), None)
             if related_model is None:
                 raise ValueError(f"Related model class for '{rel}' not found in module {mod}")
             rel_map[rel] = (fk_field, related_model)
-
-        def _build_columns_and_joins() -> tuple[tuple[Column, ...], tuple[Join, ...]]:
-            base_alias = base_table
-            columns: list[Column] = [Column(name=f, table=base_alias) for f in model_fields.keys()]
-            joins: list[Join] = []
-            for rel, (fk_field, related_model) in rel_map.items():
-                rel_table = related_model.table_name()
-                rel_alias = rel_table
-                columns.extend(
-                    Column(name=col, table=rel_alias, output_name=f"{rel}__{col}")
-                    for col in related_model.model_real_fields().keys()
-                )
-                joins.append(
-                    Join(
-                        table=rel_table,
-                        alias=rel_alias,
-                        left_table=base_alias,
-                        left_column=fk_field,
-                        right_column="id",
-                    )
-                )
-            return tuple(columns), tuple(joins)
-
-        async def all(cls, limit: int = 1000):
-            db = cls.db()
-            columns, joins = _build_columns_and_joins()
-            query = SelectQuery(
-                table=base_table,
-                table_alias=base_table,
-                columns=columns,
-                joins=joins,
-                limit=limit,
-            )
-            sql, params = db.compiler.compile_select(query)
-            rows = await db.fetch(sql, *params)
-            return [cls._hydrate_with_related(row) for row in rows]
-
-        async def filter(cls, **kwargs):
-            db = cls.db()
-            columns, joins = _build_columns_and_joins()
-            where = tuple(
-                Condition(Column(key, table=base_table), Operator.EQ, value)
-                for key, value in kwargs.items()
-            )
-            query = SelectQuery(
-                table=base_table,
-                table_alias=base_table,
-                columns=columns,
-                joins=joins,
-                where=where,
-            )
-            sql, params = db.compiler.compile_select(query)
-            rows = await db.fetch(sql, *params)
-            return [cls._hydrate_with_related(row) for row in rows]
-
-        def _hydrate_with_related(cls, row):
-            base_data = {}
-            related_objs = {}
-            for k, v in dict(row).items():
-                if "__" in k:
-                    rel, col = k.split("__", 1)
-                    related_objs.setdefault(rel, {})[col] = v
-                else:
-                    base_data[k] = v
-            obj = cls(**base_data)
-            for rel, (fk_field, related_model) in rel_map.items():
-                rel_data = related_objs.get(rel)
-                if rel_data and rel_data.get("id") is not None:
-                    obj.__dict__[rel] = related_model(**rel_data)
-                else:
-                    obj.__dict__[rel] = None
-            return obj
-
-        RelatedSelected = type(
-            f"{cls.__name__}RelatedSelected",
-            (cls,),
-            {
-                "_select_related": related_fields,
-                "_rel_map": rel_map,
-                "all": classmethod(all),
-                "filter": classmethod(filter),
-                "_hydrate_with_related": classmethod(_hydrate_with_related),
-                "table_name": classmethod(lambda c: cls.table_name()),
-            },
-        )
-        return RelatedSelected
+        return rel_map
 
     @classmethod
-    def load_related(cls: type[T], *related_fields: str) -> type[T]:
-        """
-        Eagerly load related objects, avoiding N+1 queries.
+    def _select_related_columns_and_joins(
+        cls, rel_map: dict[str, tuple[str, type["Model"]]]
+    ) -> tuple[tuple[Column, ...], tuple[Join, ...]]:
+        """Build the projected columns and LEFT JOINs for a ``select_related`` query."""
+        base_alias = cls.table_name()
+        columns: list[Column] = [Column(name=f, table=base_alias) for f in cls.model_real_fields()]
+        joins: list[Join] = []
+        for rel, (fk_field, related_model) in rel_map.items():
+            rel_alias = related_model.table_name()
+            columns.extend(
+                Column(name=col, table=rel_alias, output_name=f"{rel}__{col}")
+                for col in related_model.model_real_fields()
+            )
+            joins.append(
+                Join(
+                    table=related_model.table_name(),
+                    alias=rel_alias,
+                    left_table=base_alias,
+                    left_column=fk_field,
+                    right_column="id",
+                )
+            )
+        return tuple(columns), tuple(joins)
 
-        Unlike :meth:`select_related` (which uses a SQL JOIN), this issues one extra
-        batched query per relation and stitches the results in Python. It works for both
-        forward foreign keys (``order.user`` via ``user_id``) and reverse relations
-        (``user.orders``), and supports nesting with ``__`` (e.g. ``"product__user"``).
+    @classmethod
+    def _hydrate_select_related(
+        cls: type[T], row: Any, rel_map: dict[str, tuple[str, type["Model"]]]
+    ) -> T:
+        """Build an instance from a joined row, attaching the related objects."""
+        base_data: dict[str, Any] = {}
+        related_objs: dict[str, dict[str, Any]] = {}
+        for k, v in dict(row).items():
+            if "__" in k:
+                rel, col = k.split("__", 1)
+                related_objs.setdefault(rel, {})[col] = v
+            else:
+                base_data[k] = v
+        obj = cls(**base_data)
+        for rel, (_fk_field, related_model) in rel_map.items():
+            rel_data = related_objs.get(rel)
+            if rel_data and rel_data.get("id") is not None:
+                obj.__dict__[rel] = related_model(**rel_data)
+            else:
+                obj.__dict__[rel] = None
+        return obj
+
+    @classmethod
+    def select_related(cls: type[T], *related_fields: str) -> QuerySet[T]:
+        """Return a :class:`QuerySet` that JOIN-loads the given FK relations.
+
+        Only direct foreign key relationships are supported (e.g. ``user_id ->
+        User``). Composes with ``filter``/``order_by``/``limit``.
+        """
+        return cls.objects.select_related(*related_fields)
+
+    @classmethod
+    def load_related(cls: type[T], *related_fields: str) -> QuerySet[T]:
+        """Return a :class:`QuerySet` that prefetches the given relations.
+
+        Unlike :meth:`select_related` (a SQL JOIN), this issues one extra batched
+        query per relation and stitches the results in Python. It handles forward
+        foreign keys (``order.user`` via ``user_id``) and reverse relations
+        (``user.orders``), and supports nesting with ``__`` (e.g.
+        ``"product__user"``).
 
         Example::
 
             users = await User.load_related("orders", "products").all()
             orders = await Order.load_related("user", "product__user").filter(status="paid")
         """
-        specs = list(related_fields)
-        parent_all = cls.all
-        parent_filter = cls.filter
-
-        async def all(_inner: type[T], limit: int = 1000) -> list[T]:
-            objs = await parent_all(limit=limit)
-            await cls._prefetch_related(objs, specs)
-            return objs
-
-        async def filter(_inner: type[T], **kwargs: Any) -> list[T]:
-            objs = await parent_filter(**kwargs)
-            await cls._prefetch_related(objs, specs)
-            return objs
-
-        return type(
-            f"{cls.__name__}WithRelated",
-            (cls,),
-            {"all": classmethod(all), "filter": classmethod(filter)},
-        )
+        return cls.objects.load_related(*related_fields)
 
     @classmethod
     async def _prefetch_related(cls, objects: Sequence["Model"], specs: list[str]) -> None:

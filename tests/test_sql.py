@@ -113,6 +113,30 @@ def test_select_no_where(compiler: Compiler):
     assert params == []
 
 
+def test_select_count(compiler: Compiler):
+    query = SelectQuery(
+        table="users",
+        where=(Condition(Column("is_active"), Operator.EQ, True),),
+        count=True,
+    )
+    sql, params = compiler.compile_select(query)
+    assert sql == 'SELECT COUNT(*) FROM "users" WHERE "is_active" = $1'
+    assert params == [True]
+
+
+def test_select_negated_condition(compiler: Compiler):
+    query = SelectQuery(
+        table="users",
+        where=(
+            Condition(Column("status"), Operator.EQ, "banned", negated=True),
+            Condition(Column("id"), Operator.IN, [1, 2], negated=True),
+        ),
+    )
+    sql, params = compiler.compile_select(query)
+    assert sql == ('SELECT * FROM "users" WHERE NOT ("status" = $1) AND NOT ("id" IN ($2, $3))')
+    assert params == ["banned", 1, 2]
+
+
 # -- INSERT ------------------------------------------------------------------
 
 
