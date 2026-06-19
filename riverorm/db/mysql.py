@@ -2,6 +2,8 @@ import logging
 
 import aiomysql
 
+from riverorm.sql import Dialect, MySQLDialect
+
 from .base import BaseDatabase
 
 logger = logging.getLogger(__name__)
@@ -11,6 +13,7 @@ class MySQLDatabase(BaseDatabase):
     _conn: aiomysql.Connection | None
     _debug: bool
     _dsn: str
+    _dialect: Dialect = MySQLDialect()
 
     def __init__(self, dsn: str, debug: bool = False):
         self._conn = None
@@ -20,6 +23,10 @@ class MySQLDatabase(BaseDatabase):
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._dialect
 
     def dsn_to_dict(self, dsn: str) -> dict:
         """Convert DSN string (RFC 1738 style) to a dictionary for aiomysql.connect."""
@@ -51,7 +58,9 @@ class MySQLDatabase(BaseDatabase):
         return dct
 
     async def connect(self) -> None:
-        self._conn = await aiomysql.connect(**self.dsn_to_dict(self._dsn))
+        # autocommit so writes/DDL persist without explicit transaction handling,
+        # matching asyncpg's default behaviour.
+        self._conn = await aiomysql.connect(autocommit=True, **self.dsn_to_dict(self._dsn))
         self.is_connected = True
 
     async def close(self) -> None:
@@ -72,10 +81,8 @@ class MySQLDatabase(BaseDatabase):
     async def fetch(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("select"):
-            raise ValueError("Fetch can only be used with SELECT queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         async with self._conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(query, args)
             return await cursor.fetchall()
@@ -83,10 +90,8 @@ class MySQLDatabase(BaseDatabase):
     async def fetchrow(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("select"):
-            raise ValueError("Fetchrow can only be used with SELECT queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         async with self._conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(query, args)
             return await cursor.fetchone()
@@ -94,29 +99,22 @@ class MySQLDatabase(BaseDatabase):
     async def update(self, query: str, *args):
         if self._conn is None:
             raise Exception("Connection is not established")
-        if not query.strip().lower().startswith("update"):
-            raise ValueError("Update can only be used with UPDATE queries")
-        if not query.strip().endswith(";"):
-            query += ";"
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
         async with self._conn.cursor() as cursor:
             await cursor.execute(query, args)
             return cursor.rowcount
 
-    @staticmethod
-    def python_to_sql_type(py_type: type) -> str:
-        if py_type is int:
-            return "INT"
-        elif py_type is float:
-            return "FLOAT"
-        elif py_type is str:
-            return "VARCHAR(255)"
-        elif py_type is bool:
-            return "BOOLEAN"
-        elif py_type is bytes:
-            return "BLOB"
-        else:
-            raise ValueError(f"Unsupported type: {py_type}")
+    async def execute_insert(self, query: str, *args):
+        """Run an ``INSERT`` and return the auto-increment PK via ``lastrowid``.
 
-    @staticmethod
-    def auto_increment_primary_key_sql(name: str) -> str:
-        return f"{name} INTEGER PRIMARY KEY AUTO_INCREMENT"
+        MySQL has no ``RETURNING`` clause; the generated primary key is taken
+        from ``cursor.lastrowid``. Assumes a single integer auto-increment PK.
+        """
+        if self._conn is None:
+            raise Exception("Connection is not established")
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
+        async with self._conn.cursor() as cursor:
+            await cursor.execute(query, args)
+            return cursor.lastrowid

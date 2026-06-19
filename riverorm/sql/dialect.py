@@ -112,4 +112,73 @@ class PostgresDialect(Dialect):
             raise TypeError(f"Unsupported Python type for SQL: {py_type}")
 
     def auto_increment_pk(self, column: str) -> str:
-        return f"{column} SERIAL PRIMARY KEY"
+        return f"{self.quote(column)} SERIAL PRIMARY KEY"
+
+
+class MySQLDialect(Dialect):
+    """MySQL syntax: backtick quoting and ``%s`` placeholders.
+
+    MySQL/aiomysql uses the ``format`` paramstyle, so every positional parameter
+    is rendered as ``%s`` regardless of its index. There is no ``RETURNING``
+    clause; generated primary keys are read from ``cursor.lastrowid`` instead
+    (see :meth:`riverorm.db.mysql.MySQLDatabase.execute_insert`).
+    """
+
+    supports_returning = False
+
+    def quote(self, identifier: str) -> str:
+        escaped = identifier.replace("`", "``")
+        return f"`{escaped}`"
+
+    def placeholder(self, index: int) -> str:
+        # aiomysql's paramstyle is ``format``; placeholders are positional by
+        # order, not by index, so the index is intentionally ignored.
+        return "%s"
+
+    @staticmethod
+    def python_to_sql_type(annotation: type) -> str:
+        py_type: typing.Any = annotation
+
+        # Unwrap Union/Optional (``int | None``) to the first non-None member,
+        # mirroring :meth:`PostgresDialect.python_to_sql_type`.
+        union_types = (
+            getattr(typing, "Union", None),
+            getattr(types, "UnionType", None),
+        )
+        if (hasattr(py_type, "__origin__") and py_type.__origin__ in union_types) or (
+            hasattr(types, "UnionType") and isinstance(py_type, types.UnionType)
+        ):
+            args = getattr(py_type, "__args__", None)
+            if (
+                args is None
+                and hasattr(py_type, "__origin__")
+                and hasattr(py_type.__origin__, "__args__")
+            ):
+                args = py_type.__origin__.__args__
+            if args:
+                py_type = next(t for t in args if t is not type(None))
+
+        if py_type is bool:
+            # Check bool before int (bool is a subclass of int). BOOLEAN is a
+            # MySQL synonym for TINYINT(1) but avoids the deprecated explicit
+            # integer display width.
+            return "BOOLEAN"
+        elif py_type is int:
+            return "INT"
+        elif py_type is float:
+            return "DOUBLE"
+        elif py_type is str:
+            return "TEXT"
+        elif hasattr(py_type, "__name__") and py_type.__name__ == "datetime":
+            return "DATETIME"
+        elif hasattr(py_type, "__name__") and py_type.__name__ == "date":
+            return "DATE"
+        elif hasattr(py_type, "__name__") and py_type.__name__ == "UUID":
+            return "CHAR(36)"
+        elif py_type is list or (hasattr(py_type, "__origin__") and py_type.__origin__ is list):
+            return "JSON"
+        else:
+            raise TypeError(f"Unsupported Python type for SQL: {py_type}")
+
+    def auto_increment_pk(self, column: str) -> str:
+        return f"{self.quote(column)} INT AUTO_INCREMENT PRIMARY KEY"

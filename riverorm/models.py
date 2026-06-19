@@ -8,6 +8,16 @@ from pydantic.fields import FieldInfo
 
 from riverorm import constants
 from riverorm.db import BaseDatabase, DatabaseRegistry
+from riverorm.sql import (
+    Column,
+    Condition,
+    DeleteQuery,
+    InsertQuery,
+    Join,
+    Operator,
+    SelectQuery,
+    UpdateQuery,
+)
 from riverorm.utils import is_int_type
 
 T = TypeVar("T", bound="Model")
@@ -129,56 +139,114 @@ class Model(BaseModel):
             name: field for name, field in cls.model_fields.items() if name not in virtual_fields
         }
 
+    @classmethod
+    def _conditions_from_kwargs(cls, kwargs: dict[str, Any]) -> tuple[Condition, ...]:
+        """Translate Django-style ``field__op=value`` kwargs into ``Condition``s."""
+        ops = {
+            "gt": Operator.GT,
+            "lt": Operator.LT,
+            "gte": Operator.GTE,
+            "lte": Operator.LTE,
+            "ne": Operator.NE,
+            "eq": Operator.EQ,
+            "in": Operator.IN,
+        }
+        conditions: list[Condition] = []
+        for key, value in kwargs.items():
+            if "__" in key:
+                field, op = key.rsplit("__", 1)
+                operator = ops.get(op)
+                if operator is None:
+                    raise ValueError(f"Unsupported filter operator: {op}")
+                if operator is Operator.IN:
+                    assert isinstance(value, (list, tuple)), (
+                        "__in operator requires a list or tuple"
+                    )
+            else:
+                field, operator = key, Operator.EQ
+            conditions.append(Condition(Column(field), operator, value))
+        return tuple(conditions)
+
     async def save(self):
         """Save the model instance to the database, with auto-increment PK support."""
+        db = self.db()
+        compiler = db.compiler
         fields = list(self.__class__.model_real_fields().keys())
         pk_name = self.Meta.primary_key
         pk = getattr(self, pk_name, None)
 
         if pk is None:
-            # INSERT: omit PK if None, let DB auto-generate
+            # INSERT: omit PK if None, let DB auto-generate it.
             insert_fields = [f for f in fields if not (f == pk_name and getattr(self, f) is None)]
-            values = [getattr(self, f) for f in insert_fields]
-            cols = ", ".join(insert_fields)
-            placeholders = ", ".join(f"${i + 1}" for i in range(len(insert_fields)))
-            # Use RETURNING to fetch the generated PK
-            query = (
-                f'INSERT INTO "{self.table_name()}" ({cols}) VALUES ({placeholders}) '
-                f"RETURNING {pk_name}"
-            )
-            row = await self.db().fetchrow(query, *values)
-            if row and pk_name in row:
-                setattr(self, pk_name, row[pk_name])
+            values = tuple(getattr(self, f) for f in insert_fields)
+            if db.dialect.supports_returning:
+                query = InsertQuery(
+                    table=self.table_name(),
+                    columns=tuple(insert_fields),
+                    values=values,
+                    returning=pk_name,
+                )
+                sql, params = compiler.compile_insert(query)
+                row = await db.fetchrow(sql, *params)
+                if row and pk_name in row:
+                    setattr(self, pk_name, row[pk_name])
+            else:
+                # No RETURNING (e.g. MySQL): read the generated PK from the driver
+                # (cursor.lastrowid). Assumes a single int auto-increment PK.
+                query = InsertQuery(
+                    table=self.table_name(),
+                    columns=tuple(insert_fields),
+                    values=values,
+                    returning=None,
+                )
+                sql, params = compiler.compile_insert(query)
+                new_pk = await db.execute_insert(sql, *params)
+                if new_pk is not None:
+                    setattr(self, pk_name, new_pk)
         else:
             # UPDATE
-            values = [getattr(self, f) for f in fields]
-            cols = ", ".join(f"{f} = ${i + 1}" for i, f in enumerate(fields))
-            query = f'UPDATE "{self.table_name()}" SET {cols} WHERE {pk_name} = ${len(fields) + 1}'
-            values.append(pk)
-            await self.db().update(query, *values)
-        # TODO: Update the instance with the new values from the database
+            values = tuple(getattr(self, f) for f in fields)
+            update = UpdateQuery(
+                table=self.table_name(),
+                columns=tuple(fields),
+                values=values,
+                where=(Condition(Column(pk_name), Operator.EQ, pk),),
+            )
+            sql, params = compiler.compile_update(update)
+            await db.update(sql, *params)
         return self
 
     async def delete(self):
-        pk_value = getattr(self, self.Meta.primary_key)
-        query = f'DELETE FROM "{self.table_name()}" WHERE {self.Meta.primary_key} = $1'
-        await self.db().execute(query, pk_value)
+        pk_name = self.Meta.primary_key
+        pk_value = getattr(self, pk_name)
+        db = self.db()
+        delete = DeleteQuery(
+            table=self.table_name(),
+            where=(Condition(Column(pk_name), Operator.EQ, pk_value),),
+        )
+        sql, params = db.compiler.compile_delete(delete)
+        await db.execute(sql, *params)
 
     @classmethod
     async def all(cls: type[T], limit: int = 1000) -> list[T]:
         """Fetch all rows for this model (up to the given limit)."""
-        query = f'SELECT * FROM "{cls.table_name()}" LIMIT {limit};'
-        rows = await cls.db().fetch(query)
+        db = cls.db()
+        query = SelectQuery(table=cls.table_name(), limit=limit)
+        sql, params = db.compiler.compile_select(query)
+        rows = await db.fetch(sql, *params)
         return [cls(**dict(row)) for row in rows]
 
     @classmethod
     async def get(cls: type[T], **kwargs) -> T | None:
-        keys = list(kwargs.keys())
-        values = list(kwargs.values())
-        conditions = " AND ".join(f"{k} = ${i + 1}" for i, k in enumerate(keys))
-        query = f'SELECT * FROM "{cls.table_name()}" WHERE {conditions} LIMIT 1'
-        row = await cls.db().fetchrow(query, *values)
-        return cls(**row) if row else None
+        db = cls.db()
+        query = SelectQuery(
+            table=cls.table_name(),
+            where=cls._conditions_from_kwargs(kwargs),
+            limit=1,
+        )
+        sql, params = db.compiler.compile_select(query)
+        row = await db.fetchrow(sql, *params)
+        return cls(**dict(row)) if row else None
 
     @classmethod
     async def filter(cls: type[T], **kwargs) -> list[T]:
@@ -186,43 +254,13 @@ class Model(BaseModel):
         Filter rows using field lookups, e.g. age__gt=18, name="foo".
         Supported operators: __gt, __lt, __gte, __lte, __ne, __eq (default), __in
         """
-        ops = {
-            "gt": ">",
-            "lt": "<",
-            "gte": ">=",
-            "lte": "<=",
-            "ne": "!=",
-            "eq": "=",
-            "in": "IN",
-        }
-        conditions = []
-        values: list = []
-        param_idx = 1
-        for key, value in kwargs.items():
-            if "__" in key:
-                field, op = key.rsplit("__", 1)
-                sql_op = ops.get(op)
-                if not sql_op:
-                    raise ValueError(f"Unsupported filter operator: {op}")
-                if op == "in":
-                    assert isinstance(value, (list, tuple)), (
-                        "__in operator requires a list or tuple"
-                    )
-                    placeholders = ", ".join(f"${param_idx + i}" for i in range(len(value)))
-                    conditions.append(f"{field} IN ({placeholders})")
-                    values.extend(value)
-                    param_idx += len(value)
-                else:
-                    conditions.append(f"{field} {sql_op} ${param_idx}")
-                    values.append(value)
-                    param_idx += 1
-            else:
-                conditions.append(f"{key} = ${param_idx}")
-                values.append(value)
-                param_idx += 1
-        where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        query = f'SELECT * FROM "{cls.table_name()}"{where}'
-        rows = await cls.db().fetch(query, *values)
+        db = cls.db()
+        query = SelectQuery(
+            table=cls.table_name(),
+            where=cls._conditions_from_kwargs(kwargs),
+        )
+        sql, params = db.compiler.compile_select(query)
+        rows = await db.fetch(sql, *params)
         return [cls(**dict(r)) for r in rows]
 
     @classmethod
@@ -247,58 +285,58 @@ class Model(BaseModel):
                 raise ValueError(f"Related model class for '{rel}' not found in module {mod}")
             rel_map[rel] = (fk_field, related_model)
 
-        async def all(cls, limit: int = 1000):
+        def _build_columns_and_joins() -> tuple[tuple[Column, ...], tuple[Join, ...]]:
             base_alias = base_table
-            select_cols = [f'"{base_alias}"."{f}"' for f in model_fields.keys()]
-            join_clauses = []
+            columns: list[Column] = [Column(name=f, table=base_alias) for f in model_fields.keys()]
+            joins: list[Join] = []
             for rel, (fk_field, related_model) in rel_map.items():
                 rel_table = related_model.table_name()
                 rel_alias = rel_table
-                rel_cols = [
-                    f'"{rel_alias}"."{col}" AS {rel}__{col}'
+                columns.extend(
+                    Column(name=col, table=rel_alias, output_name=f"{rel}__{col}")
                     for col in related_model.model_real_fields().keys()
-                ]
-                select_cols.extend(rel_cols)
-                join_clauses.append(
-                    f'LEFT JOIN "{rel_table}" AS "{rel_alias}" '
-                    f'ON "{base_alias}"."{fk_field}" = "{rel_alias}"."id"'
                 )
-            select_sql = ", ".join(select_cols)
-            joins = " ".join(join_clauses)
-            query = (
-                f'SELECT {select_sql} FROM "{base_table}" AS "{base_alias}" {joins} LIMIT {limit};'
+                joins.append(
+                    Join(
+                        table=rel_table,
+                        alias=rel_alias,
+                        left_table=base_alias,
+                        left_column=fk_field,
+                        right_column="id",
+                    )
+                )
+            return tuple(columns), tuple(joins)
+
+        async def all(cls, limit: int = 1000):
+            db = cls.db()
+            columns, joins = _build_columns_and_joins()
+            query = SelectQuery(
+                table=base_table,
+                table_alias=base_table,
+                columns=columns,
+                joins=joins,
+                limit=limit,
             )
-            rows = await cls.db().fetch(query)
+            sql, params = db.compiler.compile_select(query)
+            rows = await db.fetch(sql, *params)
             return [cls._hydrate_with_related(row) for row in rows]
 
         async def filter(cls, **kwargs):
-            base_alias = base_table
-            select_cols = [f'"{base_alias}"."{f}"' for f in model_fields.keys()]
-            join_clauses = []
-            for rel, (fk_field, related_model) in rel_map.items():
-                rel_table = related_model.table_name()
-                rel_alias = rel_table
-                rel_cols = [
-                    f'"{rel_alias}"."{col}" AS {rel}__{col}'
-                    for col in related_model.model_real_fields().keys()
-                ]
-                select_cols.extend(rel_cols)
-                join_clauses.append(
-                    f'LEFT JOIN "{rel_table}" AS "{rel_alias}" '
-                    f'ON "{base_alias}"."{fk_field}" = "{rel_alias}"."id"'
-                )
-            select_sql = ", ".join(select_cols)
-            joins = " ".join(join_clauses)
-            conditions = []
-            values = []
-            param_idx = 1
-            for key, value in kwargs.items():
-                conditions.append(f'"{base_alias}"."{key}" = ${param_idx}')
-                values.append(value)
-                param_idx += 1
-            where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-            query = f'SELECT {select_sql} FROM "{base_table}" AS "{base_alias}" {joins}{where};'
-            rows = await cls.db().fetch(query, *values)
+            db = cls.db()
+            columns, joins = _build_columns_and_joins()
+            where = tuple(
+                Condition(Column(key, table=base_table), Operator.EQ, value)
+                for key, value in kwargs.items()
+            )
+            query = SelectQuery(
+                table=base_table,
+                table_alias=base_table,
+                columns=columns,
+                joins=joins,
+                where=where,
+            )
+            sql, params = db.compiler.compile_select(query)
+            rows = await db.fetch(sql, *params)
             return [cls._hydrate_with_related(row) for row in rows]
 
         def _hydrate_with_related(cls, row):
@@ -429,6 +467,7 @@ class Model(BaseModel):
     @classmethod
     async def create_table(cls: type[T]):
         db = cls.db()
+        dialect = db.dialect
         parts = []
         pk_name = getattr(cls.Meta, "primary_key", constants.DEFAULT_PRIMARY_KEY)
         for name, field in cls.model_real_fields().items():
@@ -437,17 +476,17 @@ class Model(BaseModel):
                 raise ValueError(f"Field '{name}' has no type annotation")
 
             if name == pk_name and is_int_type(field_type):
-                # Delegate to db backend for auto-increment PK SQL
-                parts.append(db.auto_increment_primary_key_sql(name))
+                parts.append(dialect.auto_increment_pk(name))
             else:
-                db_field_type = db.python_to_sql_type(field_type)
-                parts.append(f"{name} {db_field_type}")
-        sql = f'CREATE TABLE IF NOT EXISTS "{cls.table_name()}" ({", ".join(parts)});'
+                db_field_type = dialect.python_to_sql_type(field_type)
+                parts.append(f"{dialect.quote(name)} {db_field_type}")
+        sql = f"CREATE TABLE IF NOT EXISTS {dialect.quote(cls.table_name())} ({', '.join(parts)});"
         return await db.execute(sql)
 
     @classmethod
     async def drop_table(cls: type[T]):
-        sql = f'DROP TABLE IF EXISTS "{cls.table_name()}";'
+        dialect = cls.db().dialect
+        sql = f"DROP TABLE IF EXISTS {dialect.quote(cls.table_name())};"
         return await cls.db().execute(sql)
 
 
