@@ -28,13 +28,18 @@ install-python-deps:
 	uv sync --all-extras
 
 # Run Docker Compose to start the database services
-.PHONY: docker-up
-docker-up:
+.PHONY: docker-start
+docker-start:
 	docker compose -f docker-compose.yml up
 
+# Stop the database services
+.PHONY: docker-stop
+docker-stop:
+	docker compose -f docker-compose.yml stop
+
 # Stop and remove all Docker containers defined in the compose file
-.PHONY: docker-down
-docker-down:
+.PHONY: docker-destroy
+docker-destroy:
 	docker compose -f docker-compose.yml down
 
 # Run tests using pytest

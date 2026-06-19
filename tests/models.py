@@ -23,6 +23,7 @@ class Product(Model):
     price: float = Field(description="Price of the product")
     description: str = Field(description="Description of the product")
     in_stock: bool = Field(True, description="Is the product in stock?")
+    user_id: int | None = Field(default=None, description="Owner user id of the product")
     orders: list["Order"] = Field(default_factory=list, description="Orders for this product")
 
 
