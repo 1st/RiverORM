@@ -9,23 +9,47 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    # Bundle all GitHub Actions bumps into a single PR instead of one per action.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    # Bundle all Python dependency bumps into a single PR. Keeps changes to
+    # pyproject.toml / uv.lock in one place so they don't have to be merged
+    # separately and don't conflict with each other.
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      uv-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      docker:
+        patterns:
+          - "*"
 
   - package-ecosystem: "docker-compose"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      docker-compose:
+        patterns:
+          - "*"
