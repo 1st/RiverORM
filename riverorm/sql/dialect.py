@@ -40,6 +40,10 @@ class Dialect(ABC):
         """Render a column definition declaring an auto-increment primary key."""
         ...
 
+    def varchar(self, length: int) -> str:
+        """Render a variable-length string column type with a length bound."""
+        return f"VARCHAR({length})"
+
     def render_returning(self, column: str) -> str:
         """Render a ``RETURNING <column>`` clause for an insert.
 

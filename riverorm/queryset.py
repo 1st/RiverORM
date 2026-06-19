@@ -158,7 +158,7 @@ class QuerySet(Generic[T]):
         db = self.model.db()
         sql, params = db.compiler.compile_select(self._build_query())
         rows = await db.fetch(sql, *params)
-        objects = [self.model(**dict(row)) for row in rows]
+        objects = [self.model._from_row(dict(row)) for row in rows]
         if self.load_related_fields:
             await self.model._prefetch_related(objects, list(self.load_related_fields))
         return objects
