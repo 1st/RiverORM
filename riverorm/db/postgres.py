@@ -1,8 +1,8 @@
 import logging
-import types
-import typing
 
 import asyncpg
+
+from riverorm.sql import Dialect, PostgresDialect
 
 from .base import BaseDatabase
 
@@ -13,6 +13,7 @@ class PostgresDatabase(BaseDatabase):
     _conn: asyncpg.Connection | None
     _debug: bool
     _dsn: str
+    _dialect: Dialect = PostgresDialect()
 
     def __init__(self, dsn: str, debug: bool = False):
         self._conn = None
@@ -22,6 +23,10 @@ class PostgresDatabase(BaseDatabase):
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
+
+    @property
+    def dialect(self) -> Dialect:
+        return self._dialect
 
     async def connect(self) -> None:
         self._conn = await asyncpg.connect(self._dsn)
@@ -71,59 +76,15 @@ class PostgresDatabase(BaseDatabase):
             query += ";"
         return await self._conn.execute(query, *args)
 
-    @staticmethod
-    def python_to_sql_type(py_type: type) -> str:
-        # Handle Union types (e.g., Optional[int], int | None)
+    async def execute_insert(self, query: str, *args):
+        """Run an ``INSERT ... RETURNING`` and return the generated PK value.
 
-        # For PEP 604 (int | None), __origin__ is types.UnionType in Python 3.10+
-        union_types = (
-            getattr(typing, "Union", None),
-            getattr(types, "UnionType", None),
-        )
-        # Handle typing.Union and PEP 604 unions
-        if (hasattr(py_type, "__origin__") and py_type.__origin__ in union_types) or (
-            hasattr(types, "UnionType") and isinstance(py_type, types.UnionType)
-        ):
-            # Get the first non-None type from the union
-            args = getattr(py_type, "__args__", None)
-            if args is None:
-                args = py_type.__args__ if hasattr(py_type, "__args__") else None
-            if (
-                args is None
-                and hasattr(py_type, "__origin__")
-                and hasattr(py_type.__origin__, "__args__")
-            ):
-                args = py_type.__origin__.__args__
-            if args is None:
-                # For PEP 604, __args__ is available
-                args = getattr(py_type, "__args__", None)
-            if args:
-                py_type = next(t for t in args if t is not type(None))
-
-        if py_type is int:
-            return "INTEGER"
-        elif py_type is float:
-            return "REAL"
-        elif py_type is bool:
-            return "BOOLEAN"
-        elif py_type is str:
-            return "TEXT"
-        elif hasattr(py_type, "__name__") and py_type.__name__ == "datetime":
-            return "TIMESTAMP"
-        elif hasattr(py_type, "__name__") and py_type.__name__ == "date":
-            return "DATE"
-        elif hasattr(py_type, "__name__") and py_type.__name__ == "UUID":
-            return "UUID"
-        elif (
-            py_type is list
-            or (hasattr(py_type, "__origin__") and py_type.__origin__ is list)
-            or (hasattr(py_type, "__origin__") and py_type.__origin__ is typing.List)
-        ):
-            # For list types, use JSONB in PostgreSQL
-            return "JSONB"
-        else:
-            raise TypeError(f"Unsupported Python type for SQL: {py_type}")
-
-    @staticmethod
-    def auto_increment_primary_key_sql(name: str) -> str:
-        return f"{name} SERIAL PRIMARY KEY"
+        Postgres supports ``RETURNING``, so the caller is expected to append a
+        ``RETURNING`` clause; the first returned column is the new primary key.
+        """
+        if self._conn is None:
+            raise Exception("Connection is not established")
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
+        row = await self._conn.fetchrow(query, *args)
+        return next(iter(row.values())) if row else None

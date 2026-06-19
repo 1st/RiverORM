@@ -10,6 +10,7 @@ It is intentionally pure: no database connections, no I/O.
 
 from .compiler import Compiler as Compiler
 from .dialect import Dialect as Dialect
+from .dialect import MySQLDialect as MySQLDialect
 from .dialect import PostgresDialect as PostgresDialect
 from .query import Column as Column
 from .query import Condition as Condition

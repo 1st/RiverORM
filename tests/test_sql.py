@@ -16,6 +16,7 @@ from riverorm.sql import (
     DeleteQuery,
     InsertQuery,
     Join,
+    MySQLDialect,
     Operator,
     OrderBy,
     PostgresDialect,
@@ -181,8 +182,73 @@ def test_postgres_type_map_rejects_unknown():
 
 
 def test_postgres_autoincrement_pk():
-    assert PostgresDialect().auto_increment_pk("id") == "id SERIAL PRIMARY KEY"
+    assert PostgresDialect().auto_increment_pk("id") == '"id" SERIAL PRIMARY KEY'
 
 
 def test_supports_returning_flag():
     assert PostgresDialect().supports_returning is True
+
+
+# -- MySQL dialect -----------------------------------------------------------
+
+
+def test_mysql_quote_basic():
+    assert MySQLDialect().quote("users") == "`users`"
+
+
+def test_mysql_quote_escapes_embedded_backticks():
+    assert MySQLDialect().quote("we`ird") == "`we``ird`"
+
+
+def test_mysql_placeholder_is_format_style():
+    d = MySQLDialect()
+    assert d.placeholder(1) == "%s"
+    assert d.placeholder(7) == "%s"
+
+
+@pytest.mark.parametrize(
+    "annotation,expected",
+    [
+        (int, "INT"),
+        (float, "DOUBLE"),
+        (bool, "BOOLEAN"),
+        (str, "TEXT"),
+        (datetime, "DATETIME"),
+        (date, "DATE"),
+        (UUID, "CHAR(36)"),
+        (list, "JSON"),
+        (list[int], "JSON"),
+        (int | None, "INT"),
+        (bool | None, "BOOLEAN"),
+    ],
+)
+def test_mysql_type_map(annotation, expected):
+    assert MySQLDialect.python_to_sql_type(annotation) == expected
+
+
+def test_mysql_type_map_rejects_unknown():
+    with pytest.raises(TypeError):
+        MySQLDialect.python_to_sql_type(object)
+
+
+def test_mysql_autoincrement_pk():
+    assert MySQLDialect().auto_increment_pk("id") == "`id` INT AUTO_INCREMENT PRIMARY KEY"
+
+
+def test_mysql_does_not_support_returning():
+    d = MySQLDialect()
+    assert d.supports_returning is False
+    assert d.render_returning("id") == ""
+
+
+def test_mysql_insert_has_no_returning():
+    compiler = Compiler(MySQLDialect())
+    query = InsertQuery(
+        table="users",
+        columns=("username", "email"),
+        values=("alice", "alice@example.com"),
+        returning="id",
+    )
+    sql, params = compiler.compile_insert(query)
+    assert sql == "INSERT INTO `users` (`username`, `email`) VALUES (%s, %s)"
+    assert params == ["alice", "alice@example.com"]

@@ -7,7 +7,7 @@ from riverorm.db import DatabaseRegistry, MySQLDatabase, PostgresDatabase
 from tests.models import Order, Product, User
 
 
-@pytest.fixture(scope="session", params=[constants.POSTGRES])  # TODO: Add constants.MYSQL
+@pytest.fixture(scope="session", params=[constants.POSTGRES, constants.MYSQL])
 def db_type(request: pytest.FixtureRequest) -> str:
     return str(request.param)
 
