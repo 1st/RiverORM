@@ -15,18 +15,10 @@ updates:
         patterns:
           - "*"
 
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    # Bundle all Python dependency bumps into a single PR. Keeps changes to
-    # pyproject.toml / uv.lock in one place so they don't have to be merged
-    # separately and don't conflict with each other.
-    groups:
-      python-dependencies:
-        patterns:
-          - "*"
-
+  # Python dependencies are managed with uv (pyproject.toml + uv.lock), so the
+  # "uv" ecosystem is the single source of truth here. A separate "pip"
+  # ecosystem would double up PRs for the same packages, so it is intentionally
+  # omitted. All Python bumps are bundled into one grouped PR.
   - package-ecosystem: "uv"
     directory: "/"
     schedule:
