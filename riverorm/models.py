@@ -4,7 +4,7 @@ import re
 import sys
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, ClassVar, TypeVar, get_args, get_origin
+from typing import Any, ClassVar, Self, TypeVar, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, PrivateAttr
 from pydantic.fields import FieldInfo
@@ -253,8 +253,8 @@ class Model(BaseModel):
             conditions.append(Condition(Column(field), operator, value))
         return tuple(conditions)
 
-    async def save(self):
-        """Save the model instance to the database, with auto-increment PK support."""
+    async def save(self) -> Self:
+        """Persist this instance (INSERT if new, UPDATE if already saved)."""
         db = self.db()
         compiler = db.compiler
         fields = list(self.__class__.model_real_fields().keys())
@@ -307,7 +307,7 @@ class Model(BaseModel):
         self._persisted = True
         return self
 
-    async def delete(self):
+    async def delete(self) -> None:
         pk_name = self.primary_key()
         pk_value = getattr(self, pk_name)
         db = self.db()
@@ -317,6 +317,16 @@ class Model(BaseModel):
         )
         sql, params = db.compiler.compile_delete(delete)
         await db.execute(sql, *params)
+
+    @classmethod
+    async def create(cls: type[T], **kwargs: Any) -> T:
+        """Create, persist, and return a new instance.
+
+        Convenience shorthand for ``Model(**kwargs).save()``.  Prefer
+        ``Model.objects.create(...)`` in new code; this classmethod exists for
+        ergonomic one-liners.
+        """
+        return await cls.objects.create(**kwargs)
 
     @classmethod
     async def all(cls: type[T], limit: int = 1000) -> list[T]:

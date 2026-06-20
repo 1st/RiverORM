@@ -273,8 +273,10 @@ orders = await Order.objects.select_related("user").filter(status="paid").order_
 | `await qs` / `qs.all()` | `list[Model]` of all matches. |
 | `first()` | The first match, or `None`. |
 | `get(**lookups)` | Exactly one match; raises `DoesNotExist` or `MultipleObjectsReturned`. |
-| `count()` | Number of matching rows. |
+| `count()` | Number of matching rows (`int`). |
 | `exists()` | `True` if any row matches. |
+| `update(**fields)` | Bulk-update all matching rows; returns affected row count. |
+| `delete()` | Bulk-delete all matching rows; returns deleted row count. |
 
 ```python
 product = await Product.objects.get(id=1)
@@ -284,20 +286,44 @@ if await User.objects.filter(username="alice").exists():
 ```
 
 All database operations are async. To create, update, or delete a single row,
-use the instance methods:
+use the instance methods or the `objects` API:
 
 ```python
-# Insert: leave the primary key unset; it is filled in after save()
+# Insert via objects.create() — creates, saves, and returns in one call
+product = await Product.objects.create(name="Laptop", price=999.99)
+
+# Equivalent longhand: instantiate then save (primary key is filled in after)
 product = Product(name="Laptop", price=999.99)
 await product.save()
 
-# Update: change attributes and save (an existing primary key triggers UPDATE)
+# Update a single row: change attributes and save again (existing PK → UPDATE)
 product.name = "Apple MacBook"
 await product.save()
 
-# Delete
+# Delete a single row
 await product.delete()
 ```
+
+### Bulk write operations
+
+`QuerySet` also exposes write terminals that operate on all matching rows at once:
+
+```python
+# Bulk update — returns number of rows changed
+count = await Order.objects.filter(status="pending").update(status="cancelled")
+
+# Bulk delete — returns number of rows removed
+count = await User.objects.filter(is_active=False).delete()
+
+# Get an existing row or create it if missing — returns (instance, created: bool)
+user, created = await User.objects.get_or_create(
+    username="alice",
+    defaults={"email": "alice@ex.com", "is_active": True},
+)
+```
+
+> **Note:** `get_or_create` is not atomic by default. For concurrent writes,
+> wrap it in a transaction (see the planned transaction support).
 
 ### Filter lookups
 

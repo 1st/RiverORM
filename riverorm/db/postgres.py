@@ -80,3 +80,15 @@ class PostgresDatabase(BaseDatabase):
             logger.debug(f"SQL: {query} - {args}")
         row = await self._conn.fetchrow(query, *args)
         return next(iter(row.values())) if row else None
+
+    async def execute_returning_rowcount(self, query: str, *args) -> int:
+        if self._conn is None:
+            raise Exception("Connection is not established")
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
+        # asyncpg returns a status string like "DELETE 3" or "UPDATE 2"
+        status: str = await self._conn.execute(query, *args)
+        try:
+            return int(status.split()[-1])
+        except (ValueError, IndexError):
+            return 0
