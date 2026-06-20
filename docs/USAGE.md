@@ -63,14 +63,43 @@ If no connections are registered, or a model's `db_alias` is not found, any DB o
 
 Models in RiverORM inherit from `Model` and use type annotations with `Field` for schema definition. Fields are real Pydantic fields, so you get validation and metadata for free.
 
+Two equivalent syntaxes are supported — choose whichever fits your style:
+
 ```python
 from riverorm import Field, Model
 
+# Classic assignment style
 class Product(Model):
     id: int | None = Field(default=None)  # `id` is the primary key by default
-    name: str
+    name: str = Field(max_length=200)
     price: float
     in_stock: bool = Field(True)
+
+# Annotated style (PEP 593) — keeps type and metadata visually separate
+from typing import Annotated
+
+class Product(Model):
+    id: int | None = Field(default=None)
+    name: Annotated[str, Field(max_length=200)]
+    price: Annotated[float, Field()]
+    in_stock: Annotated[bool, Field(True)]
+```
+
+Both styles are fully equivalent: they produce the same Pydantic model, the same
+DDL, and the same query behaviour. Use `Annotated` when you want to keep the type
+signature clean and the ORM metadata as a secondary annotation.
+
+### Nullability
+
+Annotate a field as `T | None` (or `Optional[T]`) when the column should be
+nullable in the database. Non-optional fields emit `NOT NULL` in the generated
+`CREATE TABLE` SQL:
+
+```python
+class User(Model):
+    id: int | None = Field(default=None)   # nullable (auto-increment PK)
+    username: str                           # NOT NULL
+    email: str | None = Field(default=None) # nullable column
 ```
 
 The primary key is the `id` field by default. To use a different primary key,
@@ -178,6 +207,33 @@ await product.save()
 order = Order(quantity=1, user_id=user.id, product_id=product.id)
 await order.save()
 ```
+
+### Serialization
+
+Every model instance exposes convenience methods for converting to plain Python
+dicts or JSON strings. By default, virtual (relation) fields are excluded so the
+output only contains database columns:
+
+```python
+user = await User.objects.get(id=1)
+
+# Serialize to dict (relation fields excluded)
+d = user.to_dict()
+# {'id': 1, 'username': 'alice', 'email': 'alice@ex.com', 'is_active': True}
+
+# Exclude None values too
+d = user.to_dict(exclude_none=True)
+
+# Serialize to JSON
+json_str = user.to_json()
+
+# Include relation fields if they were eagerly loaded
+user_with_orders = await User.objects.load_related("orders").get(id=1)
+d = user_with_orders.to_dict(exclude_virtual=False)
+```
+
+Pydantic's own `model_dump()` / `model_dump_json()` work too, with the full
+field set (including virtual fields and private attrs excluded by Pydantic).
 
 ---
 
