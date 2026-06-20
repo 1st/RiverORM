@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import re
+import sys
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, ClassVar, TypeVar, get_args, get_origin
@@ -24,7 +27,7 @@ from riverorm.sql import (
     Operator,
     UpdateQuery,
 )
-from riverorm.utils import is_int_type
+from riverorm.utils import is_int_type, is_nullable, unwrap_type
 
 T = TypeVar("T", bound="Model")
 
@@ -331,8 +334,6 @@ class Model(BaseModel):
         ``user_id``). The related model is resolved from the field annotation,
         falling back to a class named like the field in the model's module.
         """
-        import sys
-
         model_fields = cls.model_real_fields()
         mod = sys.modules[cls.__module__]
         rel_map: dict[str, tuple[str, type[Model]]] = {}
@@ -482,6 +483,30 @@ class Model(BaseModel):
             obj.__dict__[root] = grouped.get(getattr(obj, pk, None), [])
         return related
 
+    def to_dict(
+        self,
+        *,
+        exclude_none: bool = False,
+        exclude_virtual: bool = True,
+    ) -> dict[str, Any]:
+        """Serialize to a plain Python dict, excluding virtual/relation fields by default."""
+        exclude: set[str] | None = (
+            set(self.__class__.model_virtual_fields()) if exclude_virtual else None
+        )
+        return self.model_dump(exclude=exclude, exclude_none=exclude_none)
+
+    def to_json(
+        self,
+        *,
+        exclude_none: bool = False,
+        exclude_virtual: bool = True,
+    ) -> str:
+        """Serialize to a JSON string, excluding virtual/relation fields by default."""
+        exclude: set[str] | None = (
+            set(self.__class__.model_virtual_fields()) if exclude_virtual else None
+        )
+        return self.model_dump_json(exclude=exclude, exclude_none=exclude_none)
+
     @classmethod
     async def create_table(cls: type[T]):
         db = cls.db()
@@ -503,9 +528,9 @@ class Model(BaseModel):
                 parts.append(dialect.auto_increment_pk(name))
                 continue
 
-            if field_type is str or (
-                hasattr(field_type, "__args__") and str in getattr(field_type, "__args__", ())
-            ):
+            # Unwrap Optional/Union to get the base type for DDL decisions.
+            base_type = unwrap_type(field_type)
+            if base_type is str:
                 length = meta.max_length or (default_pk_str_length if is_pk else None)
                 db_field_type = (
                     dialect.varchar(length) if length else dialect.python_to_sql_type(field_type)
@@ -516,6 +541,8 @@ class Model(BaseModel):
             column = f"{dialect.quote(name)} {db_field_type}"
             if is_pk:
                 column += " PRIMARY KEY"
+            elif not is_nullable(field_type):
+                column += " NOT NULL"
             parts.append(column)
         sql = f"CREATE TABLE IF NOT EXISTS {dialect.quote(cls.table_name())} ({', '.join(parts)});"
         return await db.execute(sql)
