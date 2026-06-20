@@ -20,7 +20,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Generator
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from riverorm.sql import Column, Condition, OrderBy, SelectQuery
+from riverorm.sql import Column, Condition, DeleteQuery, OrderBy, SelectQuery, UpdateQuery
 
 if TYPE_CHECKING:
     from riverorm.models import Model
@@ -141,6 +141,35 @@ class QuerySet(Generic[T]):
         """Return ``True`` if at least one row matches."""
         return await self.limit(1).count() > 0
 
+    async def update(self, **kwargs: Any) -> int:
+        """Bulk-update all matching rows and return the number of rows affected.
+
+        Example::
+
+            count = await Order.objects.filter(status="pending").update(status="cancelled")
+        """
+        db = self.model.db()
+        query = UpdateQuery(
+            table=self.model.table_name(),
+            columns=tuple(kwargs.keys()),
+            values=tuple(kwargs.values()),
+            where=self.where,
+        )
+        sql, params = db.compiler.compile_update(query)
+        return await db.execute_returning_rowcount(sql, *params)
+
+    async def delete(self) -> int:
+        """Bulk-delete all matching rows and return the number of rows deleted.
+
+        Example::
+
+            count = await User.objects.filter(is_active=False).delete()
+        """
+        db = self.model.db()
+        query = DeleteQuery(table=self.model.table_name(), where=self.where)
+        sql, params = db.compiler.compile_delete(query)
+        return await db.execute_returning_rowcount(sql, *params)
+
     # -- execution ----------------------------------------------------------
 
     def _build_query(self) -> SelectQuery:
@@ -253,6 +282,54 @@ class Manager(Generic[T]):
 
     async def exists(self) -> bool:
         return await self.get_queryset().exists()
+
+    async def create(self, **kwargs: Any) -> T:
+        """Create, persist, and return a new instance.
+
+        Equivalent to ``Model(**kwargs).save()`` but reads more naturally in a
+        chain and is the preferred way to create single rows.
+
+        Example::
+
+            user = await User.objects.create(username="alice", email="alice@ex.com")
+        """
+        obj = self.model(**kwargs)
+        await obj.save()
+        return obj
+
+    async def get_or_create(
+        self, defaults: dict[str, Any] | None = None, **lookups: Any
+    ) -> tuple[T, bool]:
+        """Return ``(instance, created)``.
+
+        Tries to fetch a row matching ``lookups``; if none exists, creates one
+        with ``{**lookups, **defaults}``. The second tuple element is ``True``
+        when a new row was inserted.
+
+        Note: this is not atomic. Wrap in a transaction when strict uniqueness
+        under concurrent writes is required.
+
+        Example::
+
+            user, created = await User.objects.get_or_create(
+                username="alice",
+                defaults={"email": "alice@ex.com", "is_active": True},
+            )
+        """
+        try:
+            obj = await self.get(**lookups)
+            return obj, False
+        except self.model.DoesNotExist:
+            obj = await self.create(**(lookups | (defaults or {})))
+            return obj, True
+
+    async def update(self, **kwargs: Any) -> int:
+        """Bulk-update all rows for this model and return the number affected."""
+        return await self.get_queryset().update(**kwargs)
+
+    async def delete(self) -> int:
+        """Bulk-delete all rows for this model and return the number deleted."""
+        return await self.get_queryset().delete()
 
 
 class ManagerDescriptor:

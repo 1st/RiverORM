@@ -120,3 +120,12 @@ class MySQLDatabase(BaseDatabase):
         async with self._conn.cursor() as cursor:
             await cursor.execute(query, args)
             return cursor.lastrowid
+
+    async def execute_returning_rowcount(self, query: str, *args) -> int:
+        if self._conn is None:
+            raise Exception("Connection is not established")
+        if self._debug:
+            logger.debug(f"SQL: {query} - {args}")
+        async with self._conn.cursor() as cursor:
+            await cursor.execute(query, args)
+            return int(cursor.rowcount)

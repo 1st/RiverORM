@@ -50,3 +50,8 @@ class BaseDatabase(ABC):
         integer auto-increment primary key.
         """
         ...
+
+    @abstractmethod
+    async def execute_returning_rowcount(self, query: str, *args: Any) -> int:
+        """Execute a write query (``UPDATE`` / ``DELETE``) and return affected row count."""
+        ...
