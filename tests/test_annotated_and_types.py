@@ -8,6 +8,7 @@ import pytest
 
 from riverorm import Field, Model
 from riverorm.utils import is_nullable, unwrap_type
+from tests.models import User
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +149,9 @@ class TestUnwrapType:
 
 @pytest.fixture
 def db_models():
-    return [AnnotatedProduct, AnnotatedUser]
+    from tests.models import Order, Product
+
+    return [Order, Product, User, AnnotatedProduct, AnnotatedUser]
 
 
 @pytest.mark.asyncio
@@ -231,6 +234,37 @@ async def test_to_dict_after_save(db_setup_and_teardown):
     d = user.to_dict()
     assert d["id"] is not None
     assert d["username"] == "carol"
-    # Virtual fields must be absent
+
+
+@pytest.mark.asyncio
+async def test_to_dict_excludes_virtual_fields(db_setup_and_teardown):
+    """to_dict() must exclude relation fields from models that actually have them."""
+    user = User(username="dave", email="dave@ex.com", is_active=True)
+    await user.save()
+
+    # User has virtual relation fields: products and orders.
+    assert "products" in User.model_virtual_fields()
+    assert "orders" in User.model_virtual_fields()
+
+    d = user.to_dict()
     assert "products" not in d
     assert "orders" not in d
+    assert d["username"] == "dave"
+
+    # Opt-in: include virtual fields
+    d_all = user.to_dict(exclude_virtual=False)
+    assert "products" in d_all
+    assert "orders" in d_all
+
+
+@pytest.mark.asyncio
+async def test_to_json_excludes_virtual_fields(db_setup_and_teardown):
+    user = User(username="eve", email="eve@ex.com", is_active=True)
+    await user.save()
+
+    parsed = json.loads(user.to_json())
+    assert "products" not in parsed
+    assert "orders" not in parsed
+
+    parsed_all = json.loads(user.to_json(exclude_virtual=False))
+    assert "products" in parsed_all

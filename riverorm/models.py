@@ -1,7 +1,4 @@
-from __future__ import annotations
-
 import re
-import sys
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, ClassVar, TypeVar, get_args, get_origin
@@ -334,6 +331,8 @@ class Model(BaseModel):
         ``user_id``). The related model is resolved from the field annotation,
         falling back to a class named like the field in the model's module.
         """
+        import sys
+
         model_fields = cls.model_real_fields()
         mod = sys.modules[cls.__module__]
         rel_map: dict[str, tuple[str, type[Model]]] = {}
@@ -509,6 +508,15 @@ class Model(BaseModel):
 
     @classmethod
     async def create_table(cls: type[T]):
+        # Ensure forward references are resolved before inspecting model fields.
+        # A model may be incomplete when create_table() is called (before the first
+        # instance is constructed), because forward-referenced sibling classes were
+        # not yet defined when the model class body executed.
+        if not getattr(cls, "__pydantic_complete__", True):
+            import sys
+
+            mod = sys.modules.get(cls.__module__)
+            cls.model_rebuild(raise_errors=False, _types_namespace=vars(mod) if mod else None)
         db = cls.db()
         dialect = db.dialect
         parts = []
