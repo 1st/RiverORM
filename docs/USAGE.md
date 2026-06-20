@@ -119,11 +119,15 @@ Relationships are declared with a **foreign-key column** plus an annotated
 a field typed as a `list[...]` of the related model.
 
 ```python
+from __future__ import annotations
+
+from riverorm import Field, Model
+
 class User(Model):
     id: int | None = Field(default=None)
     username: str
     # Reverse relation — populated by load_related("orders")
-    orders: list["Order"] = Field(default_factory=list)
+    orders: list[Order] = Field(default_factory=list)
 
 class Order(Model):
     id: int | None = Field(default=None)
@@ -131,8 +135,8 @@ class Order(Model):
     user_id: int | None = Field(default=None)     # foreign key column
     product_id: int | None = Field(default=None)  # foreign key column
     # Forward relations — populated by select_related(...) / load_related(...)
-    user: "User | None" = Field(default=None)
-    product: "Product | None" = Field(default=None)
+    user: User | None = Field(default=None)
+    product: Product | None = Field(default=None)
 ```
 
 Relation fields (`user`, `product`, `orders`) are *virtual*: they are never

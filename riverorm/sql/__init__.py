@@ -8,6 +8,8 @@ string for a particular database (:class:`~riverorm.sql.dialect.Dialect` plus
 It is intentionally pure: no database connections, no I/O.
 """
 
+from __future__ import annotations
+
 from .compiler import Compiler as Compiler
 from .dialect import Dialect as Dialect
 from .dialect import MySQLDialect as MySQLDialect

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import re
+import sys
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, ClassVar, TypeVar, get_args, get_origin
@@ -41,7 +44,7 @@ def _camel_to_snake(name: str) -> str:
     return name.lower()
 
 
-def _related_model_from_annotation(annotation: Any) -> tuple[type["Model"] | None, bool]:
+def _related_model_from_annotation(annotation: Any) -> tuple[type[Model] | None, bool]:
     """
     Inspect a field annotation and return ``(related_model, is_collection)``.
 
@@ -56,7 +59,7 @@ def _related_model_from_annotation(annotation: Any) -> tuple[type["Model"] | Non
     return (_single_model(annotation), False)
 
 
-def _single_model(annotation: Any) -> type["Model"] | None:
+def _single_model(annotation: Any) -> type[Model] | None:
     """Return the ``Model`` subclass referenced by an annotation, unwrapping ``| None``."""
     if isinstance(annotation, type) and issubclass(annotation, Model):
         return annotation
@@ -64,6 +67,24 @@ def _single_model(annotation: Any) -> type["Model"] | None:
         if isinstance(arg, type) and issubclass(arg, Model):
             return arg
     return None
+
+
+def _ensure_model_complete(model: type[Model]) -> None:
+    """Resolve any deferred Pydantic forward references on *model*.
+
+    With ``from __future__ import annotations`` every annotation is stored as a
+    string.  Pydantic defers the evaluation if a referenced class isn't yet
+    defined when the model class body runs (e.g. ``User`` references ``Order``
+    before ``Order`` is declared).  By the time *any* ORM method is called the
+    defining module is already fully loaded, so ``sys.modules`` contains all the
+    classes and Pydantic can resolve everything without manual ``model_rebuild()``
+    calls from user code.
+    """
+    if getattr(model, "__pydantic_complete__", True):
+        return
+    module = sys.modules.get(model.__module__)
+    ns = vars(module) if module is not None else None
+    model.model_rebuild(raise_errors=True, _types_namespace=ns)
 
 
 class Model(BaseModel):
@@ -186,6 +207,7 @@ class Model(BaseModel):
         These are populated by ``select_related`` / ``load_related`` and are never stored
         as columns.
         """
+        _ensure_model_complete(cls)
         return {
             name: field
             for name, field in cls.model_fields.items()
@@ -324,7 +346,7 @@ class Model(BaseModel):
         return await cls.objects.filter(**kwargs).all()
 
     @classmethod
-    def _build_rel_map(cls, related_fields: Sequence[str]) -> dict[str, tuple[str, type["Model"]]]:
+    def _build_rel_map(cls, related_fields: Sequence[str]) -> dict[str, tuple[str, type[Model]]]:
         """Map each ``select_related`` field to its ``(fk_field, related_model)``.
 
         Only direct forward foreign keys are supported (e.g. ``user`` via
@@ -344,7 +366,7 @@ class Model(BaseModel):
             if rel in cls.model_fields:
                 related_model = _related_model_from_annotation(cls.model_fields[rel].annotation)[0]
             if related_model is None:
-                related_model = getattr(mod, rel.capitalize(), None)
+                related_model = getattr(mod, rel.capitalize(), None)  # type: ignore[assignment]
             if related_model is None:
                 raise ValueError(f"Related model class for '{rel}' not found in module {mod}")
             rel_map[rel] = (fk_field, related_model)
@@ -352,7 +374,7 @@ class Model(BaseModel):
 
     @classmethod
     def _select_related_columns_and_joins(
-        cls, rel_map: dict[str, tuple[str, type["Model"]]]
+        cls, rel_map: dict[str, tuple[str, type[Model]]]
     ) -> tuple[tuple[Column, ...], tuple[Join, ...]]:
         """Build the projected columns and LEFT JOINs for a ``select_related`` query."""
         base_alias = cls.table_name()
@@ -377,7 +399,7 @@ class Model(BaseModel):
 
     @classmethod
     def _hydrate_select_related(
-        cls: type[T], row: Any, rel_map: dict[str, tuple[str, type["Model"]]]
+        cls: type[T], row: Any, rel_map: dict[str, tuple[str, type[Model]]]
     ) -> T:
         """Build an instance from a joined row, attaching the related objects."""
         base_data: dict[str, Any] = {}
@@ -425,10 +447,11 @@ class Model(BaseModel):
         return cls.objects.load_related(*related_fields)
 
     @classmethod
-    async def _prefetch_related(cls, objects: Sequence["Model"], specs: list[str]) -> None:
+    async def _prefetch_related(cls, objects: Sequence[Model], specs: list[str]) -> None:
         """Populate the relations named in ``specs`` on ``objects`` with batched queries."""
         if not objects or not specs:
             return
+        _ensure_model_complete(cls)
 
         # Group ``"product__user"`` style specs by their root relation.
         groups: dict[str, list[str]] = {}
@@ -455,8 +478,8 @@ class Model(BaseModel):
 
     @classmethod
     async def _prefetch_forward(
-        cls, objects: Sequence["Model"], root: str, related_model: type["Model"]
-    ) -> list["Model"]:
+        cls, objects: Sequence[Model], root: str, related_model: type[Model]
+    ) -> list[Model]:
         """Load a forward FK relation (``cls`` has ``<root>_id``) and attach single objects."""
         fk = f"{root}_id"
         ids = {getattr(obj, fk) for obj in objects if getattr(obj, fk, None) is not None}
@@ -468,8 +491,8 @@ class Model(BaseModel):
 
     @classmethod
     async def _prefetch_reverse(
-        cls, objects: Sequence["Model"], root: str, related_model: type["Model"]
-    ) -> list["Model"]:
+        cls, objects: Sequence[Model], root: str, related_model: type[Model]
+    ) -> list[Model]:
         """Load a reverse relation (related rows point back via ``<cls>_id``) as lists."""
         back_fk = f"{_camel_to_snake(cls.__name__)}_id"
         pk = cls.primary_key()
