@@ -1,5 +1,7 @@
 """Database connection registry for managing multiple database instances."""
 
+from __future__ import annotations
+
 from riverorm.db import BaseDatabase
 
 

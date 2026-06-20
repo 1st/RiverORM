@@ -40,6 +40,8 @@ Read more details about our [mission](docs/MISSION.md).
 A minimal but complete example showing async usage, model definition, and multi-database support:
 
 ```python
+from __future__ import annotations
+
 from riverorm import Field, Model
 from riverorm.db import DatabaseRegistry, MySQLDatabase, PostgresDatabase
 

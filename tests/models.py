@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from riverorm import Field, Model
 
 
@@ -11,8 +13,8 @@ class User(Model):
     email: str | None = Field(default=None, description="Email address of the user")
     is_active: bool = Field(True, description="Is the user active?")
     # Reverse relations (populated by load_related), never stored as columns.
-    products: list["Product"] = Field(default_factory=list, description="Products owned by user")
-    orders: list["Order"] = Field(default_factory=list, description="Orders placed by the user")
+    products: list[Product] = Field(default_factory=list, description="Products owned by user")
+    orders: list[Order] = Field(default_factory=list, description="Orders placed by the user")
 
 
 class Product(Model):
@@ -27,8 +29,8 @@ class Product(Model):
     in_stock: bool = Field(True, description="Is the product in stock?")
     user_id: int | None = Field(default=None, description="Owner user id of the product")
     # Forward and reverse relations (populated by select_related / load_related).
-    user: "User | None" = Field(default=None, description="Owner of the product")
-    orders: list["Order"] = Field(default_factory=list, description="Orders for this product")
+    user: User | None = Field(default=None, description="Owner of the product")
+    orders: list[Order] = Field(default_factory=list, description="Orders for this product")
 
 
 class Order(Model):
@@ -43,5 +45,5 @@ class Order(Model):
     user_id: int | None = Field(default=None, description="User who placed the order")
     product_id: int | None = Field(default=None, description="Product ordered")
     # Forward relations (populated by select_related / load_related).
-    user: "User | None" = Field(default=None, description="User who placed the order")
-    product: "Product | None" = Field(default=None, description="Product ordered")
+    user: User | None = Field(default=None, description="User who placed the order")
+    product: Product | None = Field(default=None, description="Product ordered")

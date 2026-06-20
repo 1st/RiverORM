@@ -4,6 +4,8 @@ These tests are deliberately database-free: they exercise only the pure
 dialect + compiler machinery and assert exact ``(sql, params)`` output.
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
 from uuid import UUID
 
