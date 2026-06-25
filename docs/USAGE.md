@@ -265,6 +265,8 @@ orders = await Order.objects.select_related("user").filter(status="paid").order_
 | `limit(n)` / `offset(n)` | Slice the result set. |
 | `select_related(*fields)` | Eager-load forward relations via a `JOIN`. |
 | `load_related(*fields)` | Batched eager loading (forward / reverse / nested). |
+| `only(*fields)` | SELECT only the named columns (partial load). |
+| `defer(*fields)` | SELECT all columns *except* the named ones (partial load). |
 
 ### Terminal methods (await these)
 
@@ -284,6 +286,51 @@ n = await Product.objects.filter(in_stock=True).count()
 if await User.objects.filter(username="alice").exists():
     ...
 ```
+
+### Field-subset loading (`only` / `defer`)
+
+`only()` fetches only the named columns; `defer()` fetches everything *except*
+the named columns.  Use `Model.f.field_name` for typed, rename-safe field
+references — typos raise `AttributeError` at the call site rather than
+producing a SQL error.  Plain strings are accepted too.
+
+```python
+f = User.f  # typed field-reference namespace
+
+# Include only these columns
+users = await User.objects.only(f.id, f.username).filter(is_active=True).all()
+
+# Exclude columns (fetch everything else)
+products = await Product.objects.defer(f.description).order_by("name").all()
+
+# Plain strings are accepted too (backward-compatible)
+users = await User.objects.only("id", "username").all()
+
+# Shorthand via the model class
+users = await User.only(f.id, f.username).all()
+users = await User.defer(f.email).all()
+```
+
+Instances returned from partial queries are created with Pydantic's
+`model_construct` (no validation). Columns that were not fetched carry their
+Python-level defaults (`None`, `True`, `[]`, etc.), **not** the actual DB values.
+The primary key is always loaded (even if you omit it from `only()` or name it
+in `defer()`), so partial instances stay identity-safe.
+
+Calling `.save()` on a partial instance is safe: the UPDATE is confined to the
+columns that were actually fetched, so un-fetched columns keep their stored DB
+values instead of being overwritten with defaults. Pass `update_fields` to
+write a specific subset explicitly (works on any instance, partial or not):
+
+```python
+user = await User.objects.only(f.id, f.username).get(id=1)
+user.username = "renamed"
+await user.save()                         # UPDATE users SET username=… WHERE id=1
+await user.save(update_fields=["username"])  # same, explicit
+```
+
+Both `only()` and `defer()` raise `ValueError` immediately if you name a field
+that does not exist as a real (non-relation) column on the model.
 
 All database operations are async. To create, update, or delete a single row,
 use the instance methods or the `objects` API:

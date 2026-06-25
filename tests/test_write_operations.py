@@ -142,9 +142,7 @@ async def test_get_or_create_creates_when_missing(db_setup_and_teardown):
 
 @pytest.mark.asyncio
 async def test_get_or_create_returns_existing_without_update(db_setup_and_teardown):
-    original = await User.objects.create(
-        username="alice", email="alice@ex.com", is_active=True
-    )
+    original = await User.objects.create(username="alice", email="alice@ex.com", is_active=True)
 
     user, created = await User.objects.get_or_create(
         username="alice",
