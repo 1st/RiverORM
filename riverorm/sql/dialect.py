@@ -44,6 +44,18 @@ class Dialect(ABC):
         """Render a variable-length string column type with a length bound."""
         return f"VARCHAR({length})"
 
+    def create_index(self, table: str, column: str, *, name: str, unique: bool = False) -> str:
+        """Render a ``CREATE INDEX`` statement for a single column.
+
+        The base form is portable; dialects that support ``IF NOT EXISTS``
+        override this to make repeated calls idempotent.
+        """
+        unique_kw = "UNIQUE " if unique else ""
+        return (
+            f"CREATE {unique_kw}INDEX {self.quote(name)} "
+            f"ON {self.quote(table)} ({self.quote(column)});"
+        )
+
     def render_returning(self, column: str) -> str:
         """Render a ``RETURNING <column>`` clause for an insert.
 
@@ -117,6 +129,15 @@ class PostgresDialect(Dialect):
 
     def auto_increment_pk(self, column: str) -> str:
         return f"{self.quote(column)} SERIAL PRIMARY KEY"
+
+    def create_index(self, table: str, column: str, *, name: str, unique: bool = False) -> str:
+        # Postgres supports IF NOT EXISTS on CREATE INDEX, so repeated calls are
+        # idempotent. (MySQL does not, hence no override there.)
+        unique_kw = "UNIQUE " if unique else ""
+        return (
+            f"CREATE {unique_kw}INDEX IF NOT EXISTS {self.quote(name)} "
+            f"ON {self.quote(table)} ({self.quote(column)});"
+        )
 
 
 class MySQLDialect(Dialect):
