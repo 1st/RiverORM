@@ -20,6 +20,7 @@ import dataclasses
 from collections.abc import AsyncIterator, Generator
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
+from riverorm.fields import FieldRef
 from riverorm.sql import Column, Condition, DeleteQuery, OrderBy, SelectQuery, UpdateQuery
 
 if TYPE_CHECKING:
@@ -54,6 +55,8 @@ class QuerySet(Generic[T]):
     offset_value: int | None = None
     select_related_fields: tuple[str, ...] = ()
     load_related_fields: tuple[str, ...] = ()
+    only_fields: tuple[str, ...] = ()
+    defer_fields: tuple[str, ...] = ()
 
     # -- chaining (all return a fresh QuerySet) -----------------------------
 
@@ -98,6 +101,60 @@ class QuerySet(Generic[T]):
     def load_related(self, *fields: str) -> QuerySet[T]:
         """Return a new ``QuerySet`` that prefetches the given relations."""
         return dataclasses.replace(self, load_related_fields=self.load_related_fields + fields)
+
+    def only(self, *fields: str | FieldRef) -> QuerySet[T]:
+        """Return a new ``QuerySet`` that SELECTs only the named fields.
+
+        Pass :class:`~riverorm.fields.FieldRef` objects (via ``Model.f``) for
+        rename-safe references, or plain strings for convenience::
+
+            f = User.f
+            await User.objects.only(f.id, f.username).all()
+            await User.objects.only("id", "username").all()  # string form
+
+        Instances from partial queries use :meth:`~pydantic.BaseModel.model_construct`
+        (no validation). Un-fetched optional fields carry their Python defaults;
+        un-fetched required fields will not be set on the instance.
+        """
+        if not fields:
+            return dataclasses.replace(self, only_fields=(), defer_fields=())
+        names = self._validate_field_refs(fields, "only")
+        return dataclasses.replace(self, only_fields=names, defer_fields=())
+
+    def defer(self, *fields: str | FieldRef) -> QuerySet[T]:
+        """Return a new ``QuerySet`` that SELECTs all fields *except* the named ones.
+
+        Pass :class:`~riverorm.fields.FieldRef` objects (via ``Model.f``) for
+        rename-safe references, or plain strings for convenience::
+
+            f = User.f
+            await User.objects.defer(f.email).all()
+            await User.objects.defer("email").all()  # string form
+
+        Instances from partial queries use :meth:`~pydantic.BaseModel.model_construct`
+        (no validation). Deferred optional fields carry their Python defaults;
+        deferred required fields will not be set on the instance.
+        """
+        if not fields:
+            return dataclasses.replace(self, defer_fields=(), only_fields=())
+        names = self._validate_field_refs(fields, "defer")
+        return dataclasses.replace(self, defer_fields=names, only_fields=())
+
+    def _validate_field_refs(
+        self, fields: tuple[str | FieldRef, ...], method: str
+    ) -> tuple[str, ...]:
+        """Coerce ``only()`` / ``defer()`` arguments to validated column names.
+
+        Accepts strings or :class:`~riverorm.fields.FieldRef` values and raises
+        ``ValueError`` if any name is not a real (non-relation) column.
+        """
+        names = tuple(f if isinstance(f, str) else f.name for f in fields)
+        unknown = set(names) - set(self.model.model_real_fields())
+        if unknown:
+            raise ValueError(
+                f"Unknown fields for {method}() on {self.model.__name__}: {sorted(unknown)}"
+            )
+        return names
 
     # -- terminals ----------------------------------------------------------
 
@@ -173,8 +230,20 @@ class QuerySet(Generic[T]):
     # -- execution ----------------------------------------------------------
 
     def _build_query(self) -> SelectQuery:
+        if self.only_fields:
+            # Always load the primary key so partial instances stay identity-safe
+            # (save()/delete() rely on it), mirroring Django's only()/defer().
+            pk = self.model.primary_key()
+            names = self.only_fields if pk in self.only_fields else (pk, *self.only_fields)
+            columns: tuple[Column, ...] = tuple(Column(f) for f in names)
+        elif self.defer_fields:
+            skipped = set(self.defer_fields) - {self.model.primary_key()}
+            columns = tuple(Column(f) for f in self.model.model_real_fields() if f not in skipped)
+        else:
+            columns = ()
         return SelectQuery(
             table=self.model.table_name(),
+            columns=columns,
             where=self.where,
             order_by=self.order,
             limit=self.limit_value,
@@ -183,11 +252,19 @@ class QuerySet(Generic[T]):
 
     async def _execute(self) -> list[T]:
         if self.select_related_fields:
+            if self.only_fields or self.defer_fields:
+                raise ValueError(
+                    "only() / defer() cannot be combined with select_related(); "
+                    "the JOIN builds its own column list. Drop one of them."
+                )
             return await self._execute_select_related()
         db = self.model.db()
         sql, params = db.compiler.compile_select(self._build_query())
         rows = await db.fetch(sql, *params)
-        objects = [self.model._from_row(dict(row)) for row in rows]
+        if self.only_fields or self.defer_fields:
+            objects = [self.model._from_partial_row(dict(row)) for row in rows]
+        else:
+            objects = [self.model._from_row(dict(row)) for row in rows]
         if self.load_related_fields:
             await self.model._prefetch_related(objects, list(self.load_related_fields))
         return objects
@@ -267,6 +344,12 @@ class Manager(Generic[T]):
 
     def load_related(self, *fields: str) -> QuerySet[T]:
         return self.get_queryset().load_related(*fields)
+
+    def only(self, *fields: str | FieldRef) -> QuerySet[T]:
+        return self.get_queryset().only(*fields)
+
+    def defer(self, *fields: str | FieldRef) -> QuerySet[T]:
+        return self.get_queryset().defer(*fields)
 
     async def all(self) -> list[T]:
         return await self.get_queryset().all()

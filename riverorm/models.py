@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr
 from pydantic.fields import FieldInfo
 
 from riverorm import constants
-from riverorm.fields import Field, FieldMeta, field_meta
+from riverorm.fields import Field, FieldMeta, FieldRef, field_meta
 from riverorm.db import BaseDatabase, DatabaseRegistry
 from riverorm.queryset import (
     DoesNotExist,
@@ -87,6 +87,45 @@ def _ensure_model_complete(model: type[Model]) -> None:
     model.model_rebuild(raise_errors=True, _types_namespace=ns)
 
 
+class FieldsNamespace:
+    """Field-reference namespace returned by ``Model.f``.
+
+    Attribute access returns a :class:`~riverorm.fields.FieldRef` for each real DB
+    column.  Use the result in :meth:`~riverorm.queryset.QuerySet.only`::
+
+        await User.objects.only(User.f.username, User.f.email).all()
+
+    Accessing a non-existent or virtual (relation) field raises ``AttributeError``
+    immediately, so typos and renamed fields are caught at the call site.
+    """
+
+    __slots__ = ("_model",)
+
+    def __init__(self, model: type) -> None:
+        object.__setattr__(self, "_model", model)
+
+    def __getattr__(self, name: str) -> FieldRef:
+        model: type = object.__getattribute__(self, "_model")
+        real = model.model_real_fields()  # type: ignore[attr-defined]
+        if name not in real:
+            raise AttributeError(
+                f"{model.__name__} has no real field '{name}'. "  # type: ignore[attr-defined]
+                f"Available: {sorted(real)}"
+            )
+        return FieldRef(name)
+
+    def __dir__(self) -> list[str]:
+        model: type = object.__getattribute__(self, "_model")
+        return list(model.model_real_fields())  # type: ignore[attr-defined]
+
+
+class _FieldsDescriptor:
+    """Descriptor that yields a :class:`FieldsNamespace` on class (or instance) access."""
+
+    def __get__(self, obj: object, owner: type | None = None) -> FieldsNamespace:
+        return FieldsNamespace(owner if owner is not None else type(obj))
+
+
 class Model(BaseModel):
     """
     Base model class for River ORM.
@@ -129,8 +168,16 @@ class Model(BaseModel):
     #: the INSERT-vs-UPDATE decision in :meth:`save` for non-auto-increment PKs.
     _persisted: bool = PrivateAttr(default=False)
 
+    #: Columns actually fetched for a partially-loaded instance (``only()`` /
+    #: ``defer()``); ``None`` means the row was loaded in full. ``save()`` only
+    #: writes these columns so un-fetched ones are never clobbered with defaults.
+    _loaded_fields: set[str] | None = PrivateAttr(default=None)
+
     #: Entry point to the chainable query API: ``User.objects.filter(...)``.
     objects: ClassVar[ManagerDescriptor] = ManagerDescriptor()
+
+    #: Field-reference namespace for typed use in ``only()``: ``User.f.username``.
+    f: ClassVar[_FieldsDescriptor] = _FieldsDescriptor()
 
     #: Raised by ``get()`` when no row matches / more than one row matches.
     DoesNotExist: ClassVar[type[Exception]] = DoesNotExist
@@ -159,6 +206,19 @@ class Model(BaseModel):
         """Build an instance from a fetched DB row and mark it as persisted."""
         obj = cls(**data)
         obj._persisted = True
+        return obj
+
+    @classmethod
+    def _from_partial_row(cls: type[T], data: dict[str, Any]) -> T:
+        """Build an instance from a partial DB row without validation.
+
+        Used by ``only()`` / ``defer()`` queries where only a column subset is
+        fetched. Pydantic's ``model_construct`` skips validation and applies
+        field defaults for any columns that were not selected.
+        """
+        obj = cls.model_construct(**data)
+        obj._persisted = True
+        obj._loaded_fields = set(data)
         return obj
 
     @classmethod
@@ -253,8 +313,15 @@ class Model(BaseModel):
             conditions.append(Condition(Column(field), operator, value))
         return tuple(conditions)
 
-    async def save(self) -> Self:
-        """Persist this instance (INSERT if new, UPDATE if already saved)."""
+    async def save(self, update_fields: list[str] | None = None) -> Self:
+        """Persist this instance (INSERT if new, UPDATE if already saved).
+
+        ``update_fields`` restricts an UPDATE to the named columns. For a
+        partially-loaded instance (from ``only()`` / ``defer()``) the UPDATE is
+        confined to the columns that were actually fetched, so un-fetched fields
+        are never overwritten with their Python defaults; pass ``update_fields``
+        to write a different subset.
+        """
         db = self.db()
         compiler = db.compiler
         fields = list(self.__class__.model_real_fields().keys())
@@ -294,18 +361,43 @@ class Model(BaseModel):
                 if new_pk is not None and getattr(self, pk_name, None) is None:
                     setattr(self, pk_name, new_pk)
         else:
-            # UPDATE
-            values = tuple(getattr(self, f) for f in fields)
-            update = UpdateQuery(
-                table=self.table_name(),
-                columns=tuple(fields),
-                values=values,
-                where=(Condition(Column(pk_name), Operator.EQ, pk),),
-            )
-            sql, params = compiler.compile_update(update)
-            await db.update(sql, *params)
+            # UPDATE — write only the relevant columns (never the PK, which is the
+            # WHERE key). Defaults to the explicitly named or loaded subset so a
+            # partial instance can't clobber un-fetched columns.
+            write_fields = self._save_columns(fields, pk_name, update_fields)
+            if write_fields:
+                values = tuple(getattr(self, f) for f in write_fields)
+                update = UpdateQuery(
+                    table=self.table_name(),
+                    columns=tuple(write_fields),
+                    values=values,
+                    where=(Condition(Column(pk_name), Operator.EQ, pk),),
+                )
+                sql, params = compiler.compile_update(update)
+                await db.update(sql, *params)
         self._persisted = True
         return self
+
+    def _save_columns(
+        self, fields: list[str], pk_name: str, update_fields: list[str] | None
+    ) -> list[str]:
+        """Resolve which columns an UPDATE should write (PK always excluded).
+
+        Precedence: explicit ``update_fields`` → the loaded subset of a partial
+        instance → all columns.
+        """
+        if update_fields is not None:
+            unknown = set(update_fields) - set(fields)
+            if unknown:
+                raise ValueError(
+                    f"Unknown update_fields for {type(self).__name__}: {sorted(unknown)}"
+                )
+            selected: set[str] | None = set(update_fields)
+        elif self._loaded_fields is not None:
+            selected = self._loaded_fields
+        else:
+            selected = None
+        return [f for f in fields if f != pk_name and (selected is None or f in selected)]
 
     async def delete(self) -> None:
         pk_name = self.primary_key()
@@ -455,6 +547,30 @@ class Model(BaseModel):
             orders = await Order.load_related("user", "product__user").filter(status="paid")
         """
         return cls.objects.load_related(*related_fields)
+
+    @classmethod
+    def only(cls: type[T], *fields: str | FieldRef) -> QuerySet[T]:
+        """Return a :class:`QuerySet` that SELECTs only the named fields.
+
+        Example::
+
+            f = User.f
+            await User.only(f.id, f.username).filter(is_active=True).all()
+            await User.only("id", "username").all()  # string form
+        """
+        return cls.objects.only(*fields)
+
+    @classmethod
+    def defer(cls: type[T], *fields: str | FieldRef) -> QuerySet[T]:
+        """Return a :class:`QuerySet` that SELECTs all fields *except* the named ones.
+
+        Example::
+
+            f = User.f
+            await User.defer(f.email).all()
+            await User.defer("email").all()  # string form
+        """
+        return cls.objects.defer(*fields)
 
     @classmethod
     async def _prefetch_related(cls, objects: Sequence[Model], specs: list[str]) -> None:

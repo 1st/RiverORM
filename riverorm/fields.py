@@ -12,6 +12,7 @@ upcoming features such as relationships, indexes/constraints, and migrations.
 
 from __future__ import annotations
 
+import dataclasses
 import warnings
 from dataclasses import dataclass
 from typing import Any
@@ -94,6 +95,28 @@ def Field(  # noqa: N802 - mirrors pydantic.Field's callable-as-name convention
         kwargs.setdefault("max_length", max_length)
 
     return _PydanticField(default, **kwargs)
+
+
+@dataclasses.dataclass(frozen=True)
+class FieldRef:
+    """A typed reference to a model field for use in ``only()`` / ``defer()``.
+
+    Obtained via the ``Model.f`` namespace, which validates that the name is a
+    real DB column (not a relation) and raises ``AttributeError`` immediately
+    for typos or renamed fields::
+
+        User.f.username  # → FieldRef("username")
+        User.f.email     # → FieldRef("email")
+
+    Pass to :meth:`~riverorm.queryset.QuerySet.only` or
+    :meth:`~riverorm.queryset.QuerySet.defer` for rename-safe query construction.
+    Plain strings are also accepted by both methods.
+    """
+
+    name: str
+
+    def __repr__(self) -> str:
+        return f"FieldRef({self.name!r})"
 
 
 def field_meta(field: FieldInfo) -> FieldMeta:
