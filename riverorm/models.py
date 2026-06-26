@@ -669,6 +669,7 @@ class Model(BaseModel):
         db = cls.db()
         dialect = db.dialect
         parts = []
+        index_columns: list[str] = []
         pk_name = cls.primary_key()
         # MySQL cannot index/key a TEXT column without a length, so a string PK
         # must be a bounded VARCHAR. Default the bound when none was declared.
@@ -698,11 +699,21 @@ class Model(BaseModel):
             column = f"{dialect.quote(name)} {db_field_type}"
             if is_pk:
                 column += " PRIMARY KEY"
-            elif not is_nullable(field_type):
-                column += " NOT NULL"
+            else:
+                if not is_nullable(field_type):
+                    column += " NOT NULL"
+                if meta.unique:
+                    column += " UNIQUE"
             parts.append(column)
+            # A unique column already has an implicit index; only add a standalone
+            # one for index-without-unique, non-PK columns.
+            if meta.index and not meta.unique and not is_pk:
+                index_columns.append(name)
         sql = f"CREATE TABLE IF NOT EXISTS {dialect.quote(cls.table_name())} ({', '.join(parts)});"
-        return await db.execute(sql)
+        await db.execute(sql)
+        table = cls.table_name()
+        for col in index_columns:
+            await db.execute(dialect.create_index(table, col, name=f"idx_{table}_{col}"))
 
     @classmethod
     async def drop_table(cls: type[T]):
