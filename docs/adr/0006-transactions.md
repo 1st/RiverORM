@@ -1,7 +1,7 @@
 # 0006 — Transaction support (ContextVar-bound, pool-staged)
 
-**Status:** proposed (pending maintainer decisions — see Open questions)
-**Date:** 2026-06-27
+**Status:** accepted
+**Date:** 2026-06-27 (decisions resolved 2026-06-28)
 
 ## Context
 
@@ -42,20 +42,24 @@ ergonomic gold standard. See Sources.
 
 ## Decision
 
-Adopt **ContextVar-bound transactions with a connection pool, staged in two
-steps so the public API never changes:**
+Adopt **ContextVar-bound transactions on a connection pool**, implemented
+directly (no staging — the maintainer chose to ship concurrency-safe from day
+one so FastAPI per-request transactions are correct immediately):
 
-1. **Phase 1 — API on the shared connection.** Add `transaction()` to
-   `BaseDatabase` and a `ContextVar` recording the active transaction. Inside the
-   block, statements run on the existing shared connection without autocommit;
-   `COMMIT` on clean exit, `ROLLBACK` on exception. Documented limitation: **one
-   transaction at a time per backend** (concurrent transactions are unsafe on a
-   single connection).
-2. **Phase 2 — pool underneath (non-breaking).** Replace the single connection
-   with `asyncpg.create_pool` / `aiomysql.create_pool`. A
-   `ContextVar[Connection | None]` holds the task's checked-out connection;
-   `execute/fetch/...` use it when set, else acquire a one-off connection. This
-   makes concurrent transactions correct. **User code is unchanged.**
+- Replace each backend's single shared connection with a pool
+  (`asyncpg.create_pool` / `aiomysql.create_pool`). `connect()`/`close()` become
+  pool create/close.
+- A `ContextVar[Connection | None]` (keyed per alias) holds the **checked-out
+  connection for the current async task**. Entering `transaction()` acquires a
+  pool connection, issues `BEGIN`, and `set()`s the ContextVar (keeping the
+  token); on exit `COMMIT`/`ROLLBACK`, release to the pool, `reset(token)`.
+- The six `BaseDatabase` methods route to `ContextVar.get()` when a transaction
+  is active, else acquire a one-off pooled connection (autocommit) for the
+  statement. **`models.py`/`queryset.py` call sites are untouched.**
+
+This is exactly Tortoise's / encode-`databases`' model and gives correct
+per-task isolation: concurrent FastAPI requests each run in their own task,
+hence their own transaction connection.
 
 ### Public API
 
@@ -77,8 +81,18 @@ async with db.transaction():
         await b.save()             # rolls back to savepoint on inner error
 ```
 
-One implementation backs `db.transaction()`, an `atomic()` decorator, and an
-optional `Model.transaction()` convenience.
+**All four entry points ship**, one implementation behind them:
+
+- `db.transaction()` — core form on a `BaseDatabase`.
+- `@atomic(alias=None)` — decorator wrapping an async function (ideal as a
+  FastAPI dependency / service method).
+- `Model.transaction()` — convenience routing to the model's `Meta.db_alias`.
+- `DatabaseRegistry.transaction(alias)` — explicit alias selection for multi-DB
+  apps.
+
+**Nesting ships in v1 with real SAVEPOINTs:** a nested `async with
+db.transaction()` (depth ≥ 1) emits `SAVEPOINT`/`RELEASE`/`ROLLBACK TO`; an inner
+rollback leaves the outer transaction intact. Reentrant like Peewee's `atomic()`.
 
 ### Binding mechanism
 
@@ -133,30 +147,30 @@ the per-request FastAPI pattern correct under concurrency.
 - **MySQL autocommit becomes conditional:** inside a transaction the aiomysql
   connection must be `autocommit=False` (or `conn.begin()`), restored on exit —
   a real behavioral change to `mysql.py`.
-- **Phase 2 introduces a pool:** `connect()`/`close()` become pool create/close;
-  `is_connected` shifts from "have a connection" to "pool open." Adds pool-size
-  config surface (where? `config.py` vs DSN params).
+- **A pool replaces the single connection:** `connect()`/`close()` become pool
+  create/close; `is_connected` shifts from "have a connection" to "pool open."
+  This is a real rewrite of `postgres.py`/`mysql.py` and the largest part of the
+  work.
 - **Hidden per-task state** (the ContextVar) is accepted as the cost of
   ergonomic binding; document the caveat: do not share one transaction across
   concurrently-running `asyncio.gather` tasks.
 - **`get_or_create` becomes atomic** when wrapped, closing its documented gap.
-- Phase 1 transactions are **not concurrency-safe** until Phase 2 lands — a
-  documented interim limitation if we ship Phase 1 alone.
+## Resolved decisions
 
-## Open questions (maintainer decisions)
+1. **Connection model — pool from day one.** No staging; implement the pool +
+   ContextVar directly so transactions are concurrency-safe and FastAPI-ready
+   immediately.
+2. **Nesting — real SAVEPOINTs in v1** (reentrant `transaction()`).
+3. **Entry points — all four ship:** `db.transaction()`, `@atomic()`,
+   `Model.transaction()`, `DatabaseRegistry.transaction(alias)`.
+4. **Pool config — minimal:** sensible default min/max sizes; expose overrides
+   later (DSN query params or `config.py`) only if needed, per the minimalistic
+   mission.
+5. **SAVEPOINT/BEGIN rendering — raw SQL via the dialect** for both backends, so
+   Postgres and MySQL share one transaction code path (over asyncpg's native
+   `connection.transaction()`), keeping behavior symmetric and testable.
 
-1. **Ship order:** land Phase 1 (API on shared connection, documented
-   single-transaction caveat) first, or go straight to Phase 2 (pool) so the
-   first transactional release is concurrency-safe (FastAPI-ready)?
-2. **Savepoints in v1:** real nested SAVEPOINTs now, or flat "outermost only"
-   first with nesting later?
-3. **Pool config:** min/max size and where it's configured (kept minimal per the
-   project mission).
-4. **Public entry points:** `db.transaction()` only, or also
-   `DatabaseRegistry.transaction(alias)` and `Model.transaction()`?
-5. **asyncpg native vs. raw SQL:** use asyncpg's built-in
-   `connection.transaction()` (handles savepoints) vs. raw `BEGIN`/`SAVEPOINT`
-   via the dialect for symmetry with the aiomysql path.
+Implementation tracked in #102; FastAPI guide/example in #108.
 
 ## Sources
 
