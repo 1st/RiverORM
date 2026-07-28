@@ -16,7 +16,7 @@ services:
       retries: 5
 
   mysql:
-    image: mysql:9
+    image: mysql:26
     container_name: river_mysql
     environment:
       MYSQL_DATABASE: river_test
